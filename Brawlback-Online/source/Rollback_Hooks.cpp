@@ -1,4 +1,5 @@
 #include "Rollback_Hooks.h"
+#include "StageFixes.h"
 #include "sy_core.h"
 #include <modules.h>
 #include <ip/ip_pad_config.h>
@@ -2004,5 +2005,8 @@ namespace RollbackHooks {
         //api->syInlineHook(0x8095f894, reinterpret_cast<void*>(NetReport::netReportHook3));
         //api->syInlineHook(0x80147ec0, reinterpret_cast<void*>(NetReport::netReportHook4));
         //api->syInlineHook(0x800c8f68, reinterpret_cast<void*>(NetReport::netMinReportHook));
+
+        // StageFixes
+        StageFixes::InstallHooks(api);
     }
 }
