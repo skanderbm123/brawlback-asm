@@ -1,9 +1,9 @@
 # Continuation brief: Brawlback rollback netcode work
 
 Read this first if you're a fresh Claude Code session (or a human) picking this
-up cold. Written 2026-07-22. The user (skanderbm123) will be unreachable /
-without a PC for about two weeks starting around this date — this doc exists
-so work can continue without them around to give context.
+up cold. Written 2026-07-22, updated 2026-07-23. The user (skanderbm123) will
+be unreachable / without a PC for about two weeks starting around this date —
+this doc exists so work can continue without them around to give context.
 
 ## The goal
 
@@ -54,12 +54,12 @@ from GitHub instead):
 
 ## What's been done: the Stadium transformation freeze fix
 
-**Status: written and pushed to `skanderbm123/brawlback-asm` branch
-`savestate-efficiency` (commit `5669edd`). NOT YET BUILT OR TESTED.** The
-local machine doesn't have the build toolchain installed, and I (Claude) am
-not permitted to download/execute third-party toolchain binaries myself even
-with user authorization — that step needs a human (or an environment where
-that policy doesn't apply) to run.
+**Status: written, pushed, and now BUILT successfully (2026-07-23). Still NOT
+tested in an actual netplay match** — this remote session has no Dolphin
+build, no Brawl ISO, and no second machine, and the user is out of the
+country and unable to test either right now. See "Build results" below for
+what was actually verified, and "To build/test this" for what's still needed
+from a human with the game.
 
 ### The problem
 
@@ -122,7 +122,12 @@ lifecycle edge cases that this approach avoids entirely.
 - ✅ The hook API call (`syInlineHookRel` + module ID) follows the exact
   pattern used by dozens of other working hooks already in
   `Rollback_Hooks.cpp`'s `InstallHooks()`.
-- ❌ NOT compiled. NOT run in Dolphin. NOT tested in an actual netplay match.
+- ✅ **Compiles and links clean** (2026-07-23, this session — see "Build
+  results" below). `FreezeStadiumTransform` confirmed present as an exported
+  symbol in the final `Brawlback-Online.rel` via `nm`/`strings`.
+- ❌ Still NOT run in Dolphin. NOT tested in an actual netplay match. Nobody
+  in this session had Dolphin + a Brawl ISO available to go further than a
+  compiler check.
 - ❌ Haven't verified `stStadium::update`'s calling convention preserves `r3`
   (the `this` pointer) correctly through Syringe's inline-hook trampoline the
   way I assumed — this should hold (the trampoline only *saves* r3-r10 to the
@@ -133,21 +138,67 @@ lifecycle edge cases that this approach avoids entirely.
   `m_event0.update()` continues running harmlessly forever in the "ready but
   nothing happens" state, but this is inference, not observation.
 
+### Build results (2026-07-23)
+
+Built successfully end-to-end on a fresh Linux clone via
+`python3 ./bbk.py setup && make` (exit code 0, both `Brawlback-Online.rel` and
+`sy_core.rel` produced and copied into `sd-card/vBrawl/pf/{plugins,module}`).
+Three build-system bugs had to be fixed along the way — all pre-existing,
+none related to the Stadium fix's actual logic, all now fixed and pushed in
+commit `28c54bd`:
+
+1. **`Rollback_Hooks.cpp` included `"EXI_Hooks.h"`** but the file on disk is
+   `EXI_hooks.h` (lowercase `h`). Silently fine on case-insensitive
+   filesystems (Windows/macOS, what earlier dev machines presumably used),
+   fatal `file not found` on Linux. Fixed the include to match the real
+   filename.
+2. **Both `Brawlback-Online/Makefile` and `lib/Syriinge/Makefile`** ran a
+   separate `clang -MMD $< -o $(DEPSDIR)/$*.d` step (no `-c` flag) to
+   generate Make dependency files. Without `-c`, clang compiles *and links*,
+   so it silently wrote a full linked ELF blob to the `.d` path instead of a
+   real dependency fragment. Invisible on a from-scratch build (no `.d` files
+   exist yet to `-include`), but every subsequent incremental `make` failed
+   with `missing separator` because `-include $(DEPENDS)` tried to parse an
+   ELF binary as a Makefile. Fixed by folding dependency generation into the
+   real compile command via `-MMD -MF`, the standard idiom — one invocation
+   does both the object file and the correct `.d` file.
+3. **Case-sensitivity bugs inside the `lib/BrawlHeaders` submodule itself**
+   (a separate GitHub org's repo, `JaredWhiteOne/BrawlHeaders`, not ours to
+   patch here): `revolution/FA.h` does `#include <revolution/fa/...>` but the
+   real directory is `revolution/FA/` (and `FAremove.h` vs. real
+   `FARemove.h`). Worked around **locally only** with two symlinks
+   (`revolution/fa -> FA`, `FA/FAremove.h -> FARemove.h`) inside the
+   submodule's working tree so the build could proceed — these are
+   *untracked, not committed* (submodule dirty-content changes don't get
+   swept up by a normal `git add` in the parent repo, confirmed via `git
+   status`). **Anyone building fresh on a case-sensitive filesystem (Linux,
+   and some macOS setups) will need to redo this symlink workaround
+   themselves** until/unless it's fixed upstream in BrawlHeaders — not
+   something to fix in brawlback-asm's own commits.
+
 ### To build/test this
 
 ```bash
 cd brawlback-asm
+python3 -m pip install --user -r tools/requirements.txt  # click, requests, rich
+git submodule update --init --recursive   # lib/BrawlHeaders, lib/brawlback-common
 python3 ./bbk.py setup   # downloads a prebuilt LLVM/clang fork + elf2rel
                           # binary from a Brawlback-maintained S3 bucket —
                           # see bbk.py for exact URLs if you want to audit it first
+# On a case-sensitive filesystem (Linux, some macOS), also add:
+#   ln -s FA lib/BrawlHeaders/OpenRVL/include/revolution/fa
+#   ln -s FARemove.h lib/BrawlHeaders/OpenRVL/include/revolution/FA/FAremove.h
+mkdir -p sd-card/vBrawl/pf/plugins sd-card/vBrawl/pf/module  # if not present
 make
 ```
-Then follow the repo's own `README.md` for getting it onto an SD card /
-loaded via `BRAWLBACK-ONLINE-DEV.elf` in Dolphin, and test an actual Stadium
-match in netplay/rollback mode to confirm no crash and no more visual
-transformation once a match starts.
+This now succeeds and produces `Brawlback-Online.rel` / `sy_core.rel`. Still
+needed from here (needs a human with Dolphin + game files, or a differently
+provisioned session): follow the repo's own `README.md` for getting the
+output onto an SD card / loaded via `BRAWLBACK-ONLINE-DEV.elf` in Dolphin, and
+test an actual Stadium match in netplay/rollback mode to confirm no crash and
+no more visual transformation once a match starts.
 
-## Brawlback's open issues (current priorities, checked 2026-07-22)
+## Brawlback's open issues (current priorities, checked 2026-07-22, build status updated 2026-07-23)
 
 Ranked by what's most valuable to tackle next:
 
@@ -165,8 +216,12 @@ Ranked by what's most valuable to tackle next:
    separate hook set from the `FrameAdvance`/`FrameLogic` rollback pipeline).
    **This needs live two-client testing to actually diagnose** — not
    something resolvable by reading code alone. If you have two machines (or
-   two Dolphin instances) to test with, start there.
-2. **The Stadium fix above** — written, needs build+test (see above).
+   two Dolphin instances) to test with, start there. Still untouched as of
+   2026-07-23 — the remote session that did the Stadium build had no second
+   machine/Dolphin instance to test with either.
+2. **The Stadium fix above** — code written AND now confirmed to build/link
+   clean (2026-07-23). Only remaining step is an actual in-game netplay test,
+   which needs a human with Dolphin + the ISO.
 3. **[brawlback-asm #74](https://github.com/Brawlback-Team/brawlback-asm/issues/74)
    "Add Functionality for Duplicate Costumes"** — issue text says "ala
    Slippi" explicitly. Slippi's fix: lighten a random player's costume when
@@ -204,3 +259,9 @@ Ranked by what's most valuable to tackle next:
   repo's headers into this repo; they're different projects with different
   build systems. Use the decomp repo only as *reference* (to compute correct
   offsets/addresses), then hardcode the result here.
+- **Building on Linux works now** (confirmed 2026-07-23) but needs the
+  submodule symlink workaround noted above (case-sensitivity bugs in the
+  external `BrawlHeaders` repo) — that workaround is deliberately *not*
+  committed here since it's not our submodule to patch. If a future session
+  is confused why a clean clone fails on `revolution/fa/...` includes, this
+  is why; redo the two symlinks from "To build/test this" above.
