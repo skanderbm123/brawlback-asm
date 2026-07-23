@@ -1335,13 +1335,27 @@ namespace GMMelee {
             rumbleChoices[i] = rumble[i];
             costumeChoices[i] = costumes[i];
             fileIndexChoices[i] = fileIndices[i];
-            controlsChoices[i] = controls[i]; 
+            controlsChoices[i] = controls[i];
         }
+
+        // Both players pick their character/costume independently in their own
+        // local CSS, so it's entirely possible for them to end up identical -
+        // indistinguishable fighters otherwise (issue #74). Bump P2 to the next
+        // costume, wrapping mod 4 since every character in Brawl's base roster
+        // has at least 4 alt costumes (Pikachu is the minimum), so this is
+        // always a valid slot no matter which character was picked.
+        if (charChoices[0] == charChoices[1]
+            && costumeChoices[0] == costumeChoices[1]
+            && fileIndexChoices[0] == fileIndexChoices[1]) {
+            costumeChoices[1] = (costumeChoices[1] + 1) % 4;
+            OSReport("Duplicate costume for P1/P2, advancing P2 to costume %d\n", costumeChoices[1]);
+        }
+
         stageChoice = stageID;
         isMatchChoicesPopulated = true;
-        
+
         OSReport("Merged!\n");
-        
+
     }
     // called on match end
     void ResetMatchChoicesPopulated()
