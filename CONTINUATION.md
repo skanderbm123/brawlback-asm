@@ -5,6 +5,19 @@ up cold. Written 2026-07-22. The user (skanderbm123) will be unreachable /
 without a PC for about two weeks starting around this date — this doc exists
 so work can continue without them around to give context.
 
+## Hard constraint: fork-only, never PR upstream
+
+**Do not open a pull request, or otherwise propose merging, into any
+Brawlback-Team repo** (Project-Plus-Dolphin, brawlback-asm, brawlback-common,
+etc.). The Brawlback project is explicitly anti-AI-contribution, and an
+AI-authored PR landing there would cause real friction for the user with that
+community. All work — every commit — stays on the user's own forks
+(`skanderbm123/*`). Sync is one-way: it's fine (encouraged, even) to pull
+upstream's changes into the fork (`git fetch upstream && git merge
+upstream/<branch>`), just never push or PR the other direction. If you're
+about to run `gh pr create` against `Brawlback-Team/...`, stop — that's
+against what the user wants here.
+
 ## The goal
 
 The user's ultimate goal: a **ranked online mode for Brawl / Project M /
