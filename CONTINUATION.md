@@ -223,12 +223,48 @@ Ranked by what's most valuable to tackle next:
    clean (2026-07-23). Only remaining step is an actual in-game netplay test,
    which needs a human with Dolphin + the ISO.
 3. **[brawlback-asm #74](https://github.com/Brawlback-Team/brawlback-asm/issues/74)
-   "Add Functionality for Duplicate Costumes"** — issue text says "ala
-   Slippi" explicitly. Slippi's fix: lighten a random player's costume when
-   both pick the same one. Should be portable from Slippi's CSS/costume code
-   (check `slippi-ssbm-c` — it's actually CSS/costume UI code, this might be
-   the more relevant repo for this specific issue rather than
-   `slippi-ssbm-asm`).
+   "Add Functionality for Duplicate Costumes"** — **DONE, commit `e750dba`,
+   compiles clean, NOT tested in a live match.** Checked both `slippi-ssbm-c`
+   (turned out to only have a `teamCostumeIndex` struct field — team-color
+   stuff, not this) and `slippi-ssbm-asm` (searched the whole `Online/Menus/CSS/`
+   tree — no dedicated "duplicate costume" hack exists there either; Slippi's
+   actual fix for this, if it exists, isn't in either open-sourced repo, so
+   there was nothing to port 1:1). Instead found that `Rollback_Hooks.cpp`
+   already has the exact right insertion point: each client captures its own
+   local player's character/costume/file-index in `fillOutGameSettings`,
+   sends it over the network, and `MergeGameSettingsIntoGame` /
+   `GMMelee::PopulateMatchSettings` merges both players' independently-made
+   choices right before `FillInMeleeObj` writes them into
+   `gmGlobalModeMelee`. That's exactly where a same-character-same-costume
+   collision can be detected and is deterministic on both clients (required
+   for rollback) since it's a pure function of the exchanged settings, no
+   RNG involved.
+
+   Implemented option 2 from the issue (auto-advance to next costume) rather
+   than option 1 (Slippi-style lightening): lightening needs new
+   palette/texture asset work that doesn't exist in this codebase, while
+   auto-advance is a same-session data-only change using pipes already in
+   place. On an exact collision (same `charChoices`, `costumeChoices`, AND
+   `fileIndexChoices` for P1/P2), P2's costume is bumped via
+   `(costumeChoices[1] + 1) % 4`. Verified via web search that every
+   character in Brawl's base roster has **at least 4** alt costumes
+   (Pikachu is the minimum, most have 6, a few have 5) — so mod-4 is
+   guaranteed to land on a valid costume slot for literally any character,
+   without needing a per-character costume-count table (which isn't
+   available anywhere in `lib/BrawlHeaders` — checked). This is a
+   deliberately conservative choice: it always works, but for characters
+   with 5 or 6 costumes it never reaches for slots 4/5. Fine as a fix; if
+   someone later wants full costume-count utilization, that needs a
+   per-character table, which would need either upstream `BrawlHeaders`
+   support or the same disassembly-based reverse-engineering approach used
+   for the Stadium fix.
+
+   **Not verified**: an actual live match with two clients picking the same
+   character+costume, to confirm the CSP/costume actually renders correctly
+   and nothing else downstream assumes P1/P2 costumes are always whatever
+   was locally chosen (e.g. some other display/UI element reading the
+   pre-adjustment costume index and showing a mismatch with the in-match
+   model).
 4. **[brawlback-asm #72](https://github.com/Brawlback-Team/brawlback-asm/issues/72)
    "Implement menuing for Brawlback direct connect"** — explicitly says
    "probably just follow what Slippi has."
