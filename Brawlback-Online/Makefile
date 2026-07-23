@@ -136,14 +136,12 @@ $(OFILES_SOURCES) : $(HFILES)
 %.o: %.cpp
 #	$(info $<)
 	$(SILENTMSG) $(notdir $<)
-	$(SILENTCMD)$(CXX) $(CXXFLAGS) -MMD $< $(INCLUDE) -o $(DEPSDIR)/$*.d
-	$(SILENTCMD)$(CXX) $(CXXFLAGS) -c $< $(INCLUDE) -o $@
+	$(SILENTCMD)$(CXX) $(CXXFLAGS) -c $< $(INCLUDE) -MMD -MF $(DEPSDIR)/$*.d -o $@
 
 %.o: %.c
 #	$(info $<)
 	$(SILENTMSG) $(notdir $<)
-	$(SILENTCMD)$(CC) $(CCFLAGS) -MMD $< $(INCLUDE) -o $(DEPSDIR)/$*.d
-	$(SILENTCMD)$(CC) $(CCFLAGS) -c $< $(INCLUDE) -o $@
+	$(SILENTCMD)$(CC) $(CCFLAGS) -c $< $(INCLUDE) -MMD -MF $(DEPSDIR)/$*.d -o $@
 
 -include $(DEPENDS)
 
