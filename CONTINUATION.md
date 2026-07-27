@@ -355,37 +355,109 @@ Ranked by what's most valuable to tackle next:
    model).
 4. **[brawlback-asm #72](https://github.com/Brawlback-Team/brawlback-asm/issues/72)
    "Implement menuing for Brawlback direct connect"** — explicitly says
-   "probably just follow what Slippi has." **Started investigating
-   2026-07-27, not implemented yet** — scoping notes below for whoever picks
-   this up:
-   - The issue's own text says this "requires modifications to both the ASM
-     code and Dolphin emulator" and that workflow details are "to be
-     determined in separate discussions" — i.e. even upstream's maintainers
-     haven't nailed down a concrete spec. That's a wider scope than #74 (that
-     one was self-contained in `Rollback_Hooks.cpp`; this touches
-     Project-Plus-Dolphin too) and a vaguer target. Implementing blind here
-     risks building the wrong thing.
-   - What currently exists in `Rollback_Hooks.cpp`'s `NetMenu` namespace
-     (see `Rollback_Hooks.h` around line 208) is **not** a real direct-connect
-     system — it's a set of hooks that hijack Brawl's existing WFC "Anybody"
-     quickplay flow (`connectToAnybodyAsyncHook`, `forceFriendCode`,
-     `forceConnection`, `BBBootTosqNetAnyOkiraku`) to force a connection
-     between two Dolphin instances, bypassing the need for real Nintendo WFC
-     servers. There's no username/Lylat-ID entry UI anywhere in this repo
-     yet — this issue is asking for that to be built from scratch.
-   - Slippi's actual precedent (checked in `slippi-ssbm-asm`, now cloned in
-     full at `/workspace/slippi-ssbm-asm`): `Online/Menus/CSS/TextEntryScreen/`
-     has a whole text-entry-screen implementation —
-     `InitNameEntry.asm`, `OnEnterText.asm`, `OnConfirmButtonHandler.asm`,
-     `AutoComplete.s`, `Display8Characters.asm`, `HandleAutocompleteText.asm`,
-     etc. This is the real precedent to port from, not
-     `slippi-ssbm-c`/`slippi-ssbm-asm`'s CSS-costume code (that's for #74,
-     already checked, no help here). Next session should read through this
-     directory plus whatever matchmaking-server-facing code calls it (likely
-     in `Online/Core/`) to understand the full text-entry -> connect pipeline
-     before porting anything, then figure out the equivalent hook points in
-     Brawl's CSS/menu scene and the Project-Plus-Dolphin side that would need
-     to accept + relay a typed ID rather than the current "Anybody" auto-match.
+   "probably just follow what Slippi has," and that this "requires
+   modifications to both the ASM code and Dolphin emulator," workflow TBD.
+   **2026-07-27: investigated in depth, partially implemented (send-side
+   plumbing only, commit `51ca4dc`), blocked on two confirmed dead ends for
+   the rest.** Full account below since this took a lot of digging - useful
+   context for anyone continuing it.
+
+   **What currently exists**: `Rollback_Hooks.cpp`'s `NetMenu` namespace (see
+   `Rollback_Hooks.h` around line 208) is **not** a direct-connect system —
+   it's hooks that hijack Brawl's existing WFC "Anybody" quickplay flow
+   (`connectToAnybodyAsyncHook`, `forceFriendCode`, `forceConnection`,
+   `BBBootTosqNetAnyOkiraku`) to make the *game* instantly believe a WFC
+   match was found, bypassing Nintendo's actual WFC servers. Tracing where
+   the real network connection comes from (`CheckIsMatched` reads game
+   settings straight off an EXI channel at a fixed frequency, no handshake
+   logic in this repo at all) makes clear that **the actual peer-to-peer
+   connection is established entirely outside the game**, via
+   Project-Plus-Dolphin's own stock, unmodified Netplay Host/Join dialog
+   (standard Dolphin functionality, using Dolphin's built-in traversal-server
+   host codes — confirmed 8 characters, `NETPLAY_CODE_SIZE` in
+   `Common/TraversalProto.h`). Today, players have to alt-tab to that
+   separate Dolphin panel and type a host code there *before* booting the
+   game; these ASM hooks then just fast-forward the game's own WFC UI once
+   Dolphin's connection already exists. This issue is asking to let players
+   type that code from inside Brawl's own menu instead.
+
+   **What was implemented** (`Brawlback-Online/include/exi_packet.h`,
+   `Rollback_Hooks.h`/`.cpp`): a new `CMD_DIRECT_CONNECT` EXI command and
+   `NetMenu::SubmitDirectConnectCode(const char[8])`, following the exact
+   `EXIPacket::CreateAndSend` pattern every other outbound command in this
+   file already uses. Compiles clean, verified via `make`. This is real,
+   correct, useful groundwork — but nothing calls it yet, and nothing
+   confirmed to receive it exists yet either. Two blockers stopped this from
+   going further:
+
+   **Blocker 1 - no known-safe way to capture what a player types.** Slippi's
+   real precedent (`slippi-ssbm-asm`, cloned in full at
+   `/workspace/slippi-ssbm-asm` this session — add it back with `add_repo` if
+   it's not already in a future session's scope): `Online/Menus/CSS/TextEntryScreen/`
+   has a complete text-entry-screen implementation (`InitNameEntry.asm`,
+   `OnEnterText.asm`, `OnConfirmButtonHandler.asm`, `AutoComplete.s`,
+   `Display8Characters.asm`, etc.) built on top of Melee's own CSS
+   nametag-entry widget. Brawl has the equivalent widget —
+   `lib/BrawlHeaders/Brawl/Include/mu/selchar/mu_select_character_name_entry.h`,
+   `class MuSelctChrNameEntry` — but BrawlHeaders only has its *size*
+   (`char _0[0x94]`, an opaque blob), not a single named field. Reading back
+   what a player actually typed into it would mean guessing byte offsets
+   inside that 0x94-byte struct with zero reference material, which is a
+   real memory-safety risk in actual gameplay (read the wrong offset, get
+   garbage or crash), categorically different from an unverified build. The
+   Stadium fix could hardcode offsets safely because the separate `brawl`
+   decomp repo had a fully-decompiled, named-field version of
+   `st_stadium_update.cpp` to check against; nothing equivalent exists here
+   in what's accessible to this session. **Next step needs either the `brawl`
+   decomp repo (out of scope for this session, see the goal section above)
+   or live disassembly of the retail widget's methods** before any code can
+   safely read the entered text.
+
+   **Blocker 2 - couldn't find a Dolphin-side implementation of the protocol
+   this ASM code actually speaks.** Checked all three of
+   skanderbm123/Project-Plus-Dolphin's branches against Brawlback-Team's
+   upstream (`master`, `rollback`, `linux-fixes`):
+   - `master` has **zero** Brawlback-related files anywhere in its tree —
+     not EXI_Brawlback.cpp, not anything. It's a plain Project+/Dolphin
+     build.
+   - The *only* place `EXI_Brawlback.cpp`/`.h` exist at all is on
+     `rollback`/`linux-fixes` — and per the dumpall-pivot finding above,
+     those speak a completely different, incompatible EXI command numbering
+     (`CMD_END_FRAME=1`, `CMD_GET_REMOTE_INPUTS=5`, etc., all introduced
+     starting from the Dec 2025 "Initial commit... theoretically functional
+     rollback" - confirmed via `git log --follow` on that file, it has no
+     history before that commit) than what this ASM code currently sends
+     (`CMD_FIND_OPPONENT=5`, `CMD_START_MATCH=13`, etc. - confirmed these
+     are live/called, not dead code, via grep in `Rollback_Hooks.cpp`).
+
+   Put plainly: **as far as this session could determine, there is no
+   Project-Plus-Dolphin implementation anywhere in the fork or upstream that
+   matches the EXI protocol `savestate-efficiency`'s ASM code is currently
+   built against.** This might mean the real counterpart lives somewhere not
+   in this repo map (the user's local machine, a different branch/fork not
+   yet pushed to GitHub, something not yet synced), or it might mean this
+   pairing genuinely never existed in a complete, working state. Either way,
+   this session couldn't verify it, and didn't want to write speculative
+   Dolphin-side C++ (thread-safety-sensitive code, in an unfamiliar
+   ~large codebase, completely unbuildable/untestable in this environment's
+   remaining time budget) against a foundation it couldn't confirm. This is
+   worth a direct question to the user rather than more unilateral digging:
+   **does a working Dolphin-side counterpart to the current ASM protocol
+   exist somewhere, and if so, where?**
+
+   (For what it's worth, the general *shape* of a fix was scoped enough to
+   be useful if blocker 2 resolves: Dolphin already has everything needed
+   architecturally — `Core::QueueHostJob` for safe CPU-thread-to-UI-thread
+   dispatch, the `Host_*` extern-function pattern in `Core/Host.h` /
+   `DolphinQt/Host.cpp` for Core-to-frontend calls without a reverse Core→Qt
+   dependency, and `MainWindow::NetPlayJoin()` / `Config::NETPLAY_HOST_CODE`
+   already implement "join via host code" end to end today, just driven by
+   the Netplay Setup Dialog's own text field. A new `Host_NetPlayDirectConnect(code)`
+   that sets that config value and calls the existing, already-working
+   `NetPlayJoin()` would reuse 100% of tested connection logic rather than
+   reimplementing `NetPlayClient` construction - much safer than inventing
+   new threading code. Just noting this so it doesn't need re-deriving, not
+   claiming it's ready to write blind.)
 5. Lower priority / less netcode-central: #76 (game-end/CSS-return workflow),
    #75 (pause workflow cleanup), #73 (P2 costume sync bug — related to #74),
    #71 (BrawlHeaders repo org migration), #70 (menu game-object reverse
