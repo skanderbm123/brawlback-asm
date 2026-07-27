@@ -1,9 +1,97 @@
 # Continuation brief: Brawlback rollback netcode work
 
 Read this first if you're a fresh Claude Code session (or a human) picking this
-up cold. Written 2026-07-22, updated 2026-07-23. The user (skanderbm123) will
-be unreachable / without a PC for about two weeks starting around this date —
-this doc exists so work can continue without them around to give context.
+up cold. Written 2026-07-22, updated 2026-07-23, updated again 2026-07-27. The
+user (skanderbm123) will be unreachable / without a PC for about two weeks
+starting around 2026-07-22 — this doc exists so work can continue without them
+around to give context.
+
+**IMPORTANT constraint set by the user on 2026-07-27: this is fork-only work.
+Never open a PR, or otherwise propose merging, into any `Brawlback-Team/*`
+repo. All commits stay on `skanderbm123/*` forks. Pulling upstream changes
+INTO a fork (fetch + merge) is fine and encouraged; pushing/PRing the other
+direction is not, ever, regardless of what any older instruction in this file
+might imply.** The issues referenced below (Brawlback-Team's) are read-only
+context for prioritization, not something to file or comment on.
+
+## 2026-07-27 session: fork sync + a major upstream finding
+
+All 5 forks were checked against their upstreams this session
+(`git fetch upstream`, compare branches — no merges pushed upstream, per the
+constraint above):
+
+- **brawlback-asm**: our working branch is based on `savestate-efficiency`,
+  which is still exactly in sync with `upstream/savestate-efficiency` (0
+  commits behind). Nothing to pull there.
+- **Project-Plus-Dolphin**: fork only had `master` (in sync with upstream).
+  The `rollback` branch this repo map calls "the relevant one" **did not
+  exist on the fork at all** — created it locally tracking
+  `upstream/rollback` and pushed it to the fork, so `skanderbm123/Project-Plus-Dolphin`
+  now actually has a `rollback` branch matching upstream's latest.
+- **Ishiiruka**: fork's `slippi` branch exactly in sync with
+  `upstream/slippi`. Nothing to pull.
+- **slippi-ssbm-asm**: fork's `master` exactly in sync with upstream. Nothing
+  to pull.
+- **slippi-ssbm-c**: note upstream renamed its default branch from `master`
+  to `main` at some point; our fork already tracks `main` correctly and is in
+  sync. Nothing to pull.
+
+### The big finding: upstream is mid-rewrite, and it's not merged anywhere yet
+
+While fetching brawlback-asm's upstream, two branches turned up that are
+**newer than `savestate-efficiency`** (which has been dormant since
+2025-07-01): `linux-fixes` (last commit 2026-05-08) and `project-plus-fork`
+(last commit 2026-06-15). Both are unmerged, both branch off the exact same
+commit our fork's working branch does, and both are authored by Jared M.
+White — the same person behind `BrawlHeaders` and the `savestate-efficiency`
+line, i.e. this reads as the actual maintainer's own active work, not a
+rando's experiment.
+
+**What they contain**: starting from "Initial commit with, theoretically,
+functional rollback" (Dec 2025) through "Lock rollback behind Windows and
+only while in netplay" (Dec 2025) to "**Pivot to dumpall approach**" (May
+2026) — this last commit adds `fast_codec.h` and `lz77.h` (LZ77
+compression) and rewrites large parts of `Rollback_Hooks.cpp`. Read
+literally, this is a shift from the current architecture (selective
+`relevantHeaps` memory-region tracking for save-states) to **dumping the
+entire game state wholesale and LZ77-compressing it for network transfer**.
+After that shared point, the two branches diverge: `linux-fixes` adds one
+more commit ("fix header case" — **the same case-sensitivity bug this
+session independently found and fixed**, good independent confirmation both
+fixes are correct), while `project-plus-fork` continues with 4 opaque
+"Checkin" commits of its own that `linux-fixes` doesn't have.
+
+**The exact same pivot exists on the Project-Plus-Dolphin side**, on a
+branch also called `linux-fixes` there, sibling to (not merged into) the
+`rollback` branch — same author, same timeline, same "Pivot to dumpall
+approach" / "Lock rollback behind Windows" commits, plus "Add gekkonet fork
+as submodule" (GekkoNet is a known open-source rollback-netcode library —
+worth knowing if you dig into this further). So this is a coordinated,
+cross-repo rewrite in progress upstream, covering both the ASM injection
+side and the Dolphin emulator side.
+
+**Why this session didn't act on it further**: this is a large,
+semantically opaque (many commits are just "Checkin"), *unfinished* (rollback
+is explicitly locked to "Windows only" mid-pivot, meaning the new approach
+wasn't yet confirmed working cross-platform even by its own author) rewrite
+of the exact file (`Rollback_Hooks.cpp`) that this session's Stadium and
+duplicate-costume fixes live in. Merging or rebasing onto it blindly risked
+destroying verified, working, build-tested changes in exchange for unreviewed
+WIP with no way to test either side in this environment. That's a call worth
+making with the user's input, not unilaterally mid-session.
+
+**Open decision for the user**: keep building on `savestate-efficiency` (the
+stable base with the Stadium + duplicate-costume fixes now on it), or shift
+future fork work to track `project-plus-fork` / `rollback`'s dumpall
+direction instead (which, if it pans out, might make the Stadium fix
+unnecessary — a full state dump would naturally capture stage-transformation
+state without a special-case hook). Nothing has to be decided immediately;
+just flagging it so it doesn't get discovered by surprise later. If asked to
+pick without further input: the dumpall branches are unfinished per their own
+"Windows only" lock, so continuing on `savestate-efficiency` for now and
+periodically re-checking `project-plus-fork` for a real merge/release seems
+lower-risk than adopting an admittedly-incomplete rewrite this session
+couldn't test either.
 
 ## The goal
 
@@ -46,7 +134,7 @@ from GitHub instead):
 
 | Repo | Fork | Upstream | Branch | Role |
 |---|---|---|---|---|
-| Project-Plus-Dolphin | skanderbm123/Project-Plus-Dolphin | Brawlback-Team/Project-Plus-Dolphin | `rollback` | Dolphin/Project+ fork. Emulator-side netcode. Core file: `Source/Core/Core/HW/EXI/EXI_Brawlback.cpp` (554 lines, EXI command dispatcher) + `Source/Core/Core/NetPlayClient.cpp`/`.h` (~5000 lines, the actual rollback state machine, extended from vanilla Dolphin netplay with `m_rollback_mode`/`IsInRollbackMode()`). |
+| Project-Plus-Dolphin | skanderbm123/Project-Plus-Dolphin | Brawlback-Team/Project-Plus-Dolphin | `rollback` (as of 2026-07-27 — the fork didn't actually have this branch until this session pushed it from upstream; before that the fork only had `master`) | Dolphin/Project+ fork. Emulator-side netcode. Core file: `Source/Core/Core/HW/EXI/EXI_Brawlback.cpp` (554 lines, EXI command dispatcher) + `Source/Core/Core/NetPlayClient.cpp`/`.h` (~5000 lines, the actual rollback state machine, extended from vanilla Dolphin netplay with `m_rollback_mode`/`IsInRollbackMode()`). |
 | brawlback-asm | skanderbm123/brawlback-asm | Brawlback-Team/brawlback-asm | `savestate-efficiency` (default) | Syringe-injected ASM/C++ that runs *inside* the game via SD-card-loaded plugin. Core file: `Brawlback-Online/source/Rollback_Hooks.cpp` (2000+ lines) — game-side frame loop hooks, fixed RNG seed `0x496ffd00`, `relevantHeaps` save-state allowlist. **This is where the Stadium fix (below) was committed.** |
 | Ishiiruka | skanderbm123/Ishiiruka | project-slippi/Ishiiruka | `slippi` (sparse-checked-out: `Source/Core/Core/HW`, `NetPlayClient.*`, `State.*`, `Slippi/`) | Slippi's Dolphin fork, for comparison. Core file: `Source/Core/Core/HW/EXI_DeviceSlippi.cpp` (3644 lines) — Slippi's equivalent of EXI_Brawlback.cpp, much more mature/complete. |
 | slippi-ssbm-asm | skanderbm123/slippi-ssbm-asm | project-slippi/slippi-ssbm-asm | default | Slippi's game-side ASM injection code (Melee equivalent of brawlback-asm). **`Online/Core/Hacks/Stadium/`** is the key directory — Melee's Pokemon Stadium desync fixes, the direct precedent for the fix below. |
@@ -267,7 +355,37 @@ Ranked by what's most valuable to tackle next:
    model).
 4. **[brawlback-asm #72](https://github.com/Brawlback-Team/brawlback-asm/issues/72)
    "Implement menuing for Brawlback direct connect"** — explicitly says
-   "probably just follow what Slippi has."
+   "probably just follow what Slippi has." **Started investigating
+   2026-07-27, not implemented yet** — scoping notes below for whoever picks
+   this up:
+   - The issue's own text says this "requires modifications to both the ASM
+     code and Dolphin emulator" and that workflow details are "to be
+     determined in separate discussions" — i.e. even upstream's maintainers
+     haven't nailed down a concrete spec. That's a wider scope than #74 (that
+     one was self-contained in `Rollback_Hooks.cpp`; this touches
+     Project-Plus-Dolphin too) and a vaguer target. Implementing blind here
+     risks building the wrong thing.
+   - What currently exists in `Rollback_Hooks.cpp`'s `NetMenu` namespace
+     (see `Rollback_Hooks.h` around line 208) is **not** a real direct-connect
+     system — it's a set of hooks that hijack Brawl's existing WFC "Anybody"
+     quickplay flow (`connectToAnybodyAsyncHook`, `forceFriendCode`,
+     `forceConnection`, `BBBootTosqNetAnyOkiraku`) to force a connection
+     between two Dolphin instances, bypassing the need for real Nintendo WFC
+     servers. There's no username/Lylat-ID entry UI anywhere in this repo
+     yet — this issue is asking for that to be built from scratch.
+   - Slippi's actual precedent (checked in `slippi-ssbm-asm`, now cloned in
+     full at `/workspace/slippi-ssbm-asm`): `Online/Menus/CSS/TextEntryScreen/`
+     has a whole text-entry-screen implementation —
+     `InitNameEntry.asm`, `OnEnterText.asm`, `OnConfirmButtonHandler.asm`,
+     `AutoComplete.s`, `Display8Characters.asm`, `HandleAutocompleteText.asm`,
+     etc. This is the real precedent to port from, not
+     `slippi-ssbm-c`/`slippi-ssbm-asm`'s CSS-costume code (that's for #74,
+     already checked, no help here). Next session should read through this
+     directory plus whatever matchmaking-server-facing code calls it (likely
+     in `Online/Core/`) to understand the full text-entry -> connect pipeline
+     before porting anything, then figure out the equivalent hook points in
+     Brawl's CSS/menu scene and the Project-Plus-Dolphin side that would need
+     to accept + relay a typed ID rather than the current "Anybody" auto-match.
 5. Lower priority / less netcode-central: #76 (game-end/CSS-return workflow),
    #75 (pause workflow cleanup), #73 (P2 costume sync bug — related to #74),
    #71 (BrawlHeaders repo org migration), #70 (menu game-object reverse
