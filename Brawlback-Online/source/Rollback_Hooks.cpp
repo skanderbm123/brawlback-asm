@@ -1615,6 +1615,28 @@ namespace NetMenu {
         ChangeGfSceneField(Scene::Idle);
         gfSceneManager::getInstance()->changeNextScene();
     }
+    // Issue #72: send whatever the player typed on the direct-connect entry
+    // screen to Dolphin so it can join that netplay session, rather than the
+    // player having to leave the game and use Dolphin's own Netplay dialog.
+    //
+    // NOT WIRED UP END TO END YET - see CONTINUATION.md for the two open
+    // blockers this hits: (1) nothing calls this yet, because Brawl's CSS
+    // text-entry widget (MuSelctChrNameEntry, the same one Melee's CSS
+    // nametag box uses) only has its size known in BrawlHeaders, not its
+    // field layout, so there's no verified-safe way yet to read back what a
+    // player typed into it; and (2) this repo couldn't confirm which
+    // Project-Plus-Dolphin implementation (if any, in what's available to
+    // this session) actually receives EXI commands like this one on the
+    // savestate-efficiency protocol this repo currently speaks, so the
+    // receiving side needs to be confirmed/built before this does anything.
+    // This function is real, correct send-side plumbing for whenever both
+    // of those are resolved - it follows the exact same
+    // EXIPacket::CreateAndSend pattern as every other outbound command in
+    // this file (e.g. CMD_START_MATCH below).
+    void SubmitDirectConnectCode(const char code[DIRECT_CONNECT_CODE_SIZE])
+    {
+        EXIPacket::CreateAndSend(EXICommand::CMD_DIRECT_CONNECT, (void*)code, DIRECT_CONNECT_CODE_SIZE);
+    }
     void startMatchingCallback() {
         Utils::SaveRegs();
         

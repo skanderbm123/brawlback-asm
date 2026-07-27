@@ -212,7 +212,11 @@ namespace NetMenu {
     extern bool onQuickplayMenus;
     extern int register4;
     extern MuMsg* message;
+    // Matches Dolphin's own NETPLAY_CODE_SIZE (Common/TraversalProto.h) -
+    // direct-connect host codes are 8 characters.
+    const u8 DIRECT_CONNECT_CODE_SIZE = 8;
     // Functions
+    void SubmitDirectConnectCode(const char code[DIRECT_CONNECT_CODE_SIZE]);
     void ChangeGfSceneField(bu32 scene);
     void ChangeStruct3Scenes(bu8* structure, bu32 scene, bu32 nextScene);
     void ChangeStruct3Scenes(bu8* structure, bu32 scene);
