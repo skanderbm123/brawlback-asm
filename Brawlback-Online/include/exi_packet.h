@@ -37,11 +37,6 @@ namespace EXICommand
     const u8 CMD_COPY_EFFECTS_HEAP = 37;
     const u8 CMD_REPLACE_EFFECTS_HEAP = 38;
 
-    // Direct connect (issue #72): send a typed connect code so Dolphin can
-    // join a netplay session without the player leaving the game to use
-    // Dolphin's own Netplay dialog. See NetMenu::SubmitDirectConnectCode.
-    const u8 CMD_DIRECT_CONNECT = 40;
-
     const u8 CMD_MATCH_END = 4;
     const u8 CMD_SET_MATCH_SELECTIONS = 6;
 

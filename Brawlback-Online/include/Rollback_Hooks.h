@@ -212,9 +212,23 @@ namespace NetMenu {
     extern bool onQuickplayMenus;
     extern int register4;
     extern MuMsg* message;
-    // Matches Dolphin's own NETPLAY_CODE_SIZE (Common/TraversalProto.h) -
-    // direct-connect host codes are 8 characters.
-    const u8 DIRECT_CONNECT_CODE_SIZE = 8;
+    // Mirrors Matchmaking::OnlinePlayMode in Brawlback-Team/dolphin
+    // (Source/Core/Core/Brawlback/Netplay/Matchmaking.h) exactly - this is
+    // sent as the first payload byte of CMD_FIND_OPPONENT, so the values
+    // must match the Dolphin side byte for byte.
+    enum OnlinePlayMode : u8 {
+        RANKED = 0,
+        UNRANKED = 1,
+        DIRECT = 2,
+        TEAMS = 3,
+    };
+    // Matches the fixed connect-code field size EXIBrawlback.cpp already
+    // parses out of the CMD_FIND_OPPONENT payload (18 bytes, Shift-JIS,
+    // read starting at payload[1] - see handleFindOpponent in
+    // Brawlback-Team/dolphin). Not something invented here.
+    const u8 DIRECT_CONNECT_CODE_SIZE = 18;
+    extern OnlinePlayMode requestedMode;
+    extern char directConnectCode[DIRECT_CONNECT_CODE_SIZE];
     // Functions
     void SubmitDirectConnectCode(const char code[DIRECT_CONNECT_CODE_SIZE]);
     void ChangeGfSceneField(bu32 scene);

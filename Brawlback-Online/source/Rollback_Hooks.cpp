@@ -1473,6 +1473,8 @@ namespace NetMenu {
     bool skipToCSS = false;
     bool setRules = false;
     bool onQuickplayMenus = false;
+    OnlinePlayMode requestedMode = OnlinePlayMode::UNRANKED;
+    char directConnectCode[DIRECT_CONNECT_CODE_SIZE] = {0};
     __attribute__((naked)) void setToLoggedIn() {
         asm volatile(
             "li 4, 3\n\t"
@@ -1615,27 +1617,22 @@ namespace NetMenu {
         ChangeGfSceneField(Scene::Idle);
         gfSceneManager::getInstance()->changeNextScene();
     }
-    // Issue #72: send whatever the player typed on the direct-connect entry
-    // screen to Dolphin so it can join that netplay session, rather than the
-    // player having to leave the game and use Dolphin's own Netplay dialog.
+    // Issue #72: stage a direct-connect request for the next CMD_FIND_OPPONENT
+    // send (in setNextAnyOkirakuCaseFive below), rather than the player having
+    // to leave the game and use Dolphin's own Netplay dialog.
     //
-    // NOT WIRED UP END TO END YET - see CONTINUATION.md for the two open
-    // blockers this hits: (1) nothing calls this yet, because Brawl's CSS
-    // text-entry widget (MuSelctChrNameEntry, the same one Melee's CSS
-    // nametag box uses) only has its size known in BrawlHeaders, not its
-    // field layout, so there's no verified-safe way yet to read back what a
-    // player typed into it; and (2) this repo couldn't confirm which
-    // Project-Plus-Dolphin implementation (if any, in what's available to
-    // this session) actually receives EXI commands like this one on the
-    // savestate-efficiency protocol this repo currently speaks, so the
-    // receiving side needs to be confirmed/built before this does anything.
-    // This function is real, correct send-side plumbing for whenever both
-    // of those are resolved - it follows the exact same
-    // EXIPacket::CreateAndSend pattern as every other outbound command in
-    // this file (e.g. CMD_START_MATCH below).
+    // NOT CALLED BY ANYTHING YET - see CONTINUATION.md. Brawl's CSS text-entry
+    // widget (MuSelctChrNameEntry, the same one Melee's CSS nametag box uses)
+    // only has its size known in BrawlHeaders, not its field layout, so
+    // there's no verified-safe way yet to read back what a player typed into
+    // it. This function is real, correct plumbing for once that's resolved -
+    // the wire format (mode byte + 18-byte Shift-JIS code, as the first
+    // payload byte of CMD_FIND_OPPONENT) is confirmed against
+    // Brawlback-Team/dolphin's handleFindOpponent, not guessed.
     void SubmitDirectConnectCode(const char code[DIRECT_CONNECT_CODE_SIZE])
     {
-        EXIPacket::CreateAndSend(EXICommand::CMD_DIRECT_CONNECT, (void*)code, DIRECT_CONNECT_CODE_SIZE);
+        requestedMode = OnlinePlayMode::DIRECT;
+        memcpy(directConnectCode, code, DIRECT_CONNECT_CODE_SIZE);
     }
     void startMatchingCallback() {
         Utils::SaveRegs();
@@ -1670,8 +1667,13 @@ namespace NetMenu {
         // send our populated game settings to the emu
         EXIPacket::CreateAndSend(EXICommand::CMD_START_MATCH, &Netplay::gameSettings, sizeof(GameSettings));
 
-        // start emu netplay thread so it can start trying to find an opponent
-        EXIPacket::CreateAndSend(EXICommand::CMD_FIND_OPPONENT);
+        // start emu netplay thread so it can start trying to find an opponent.
+        // Payload: mode byte + 18-byte connect code, matching
+        // Brawlback-Team/dolphin's handleFindOpponent parsing exactly (issue #72).
+        u8 findOpponentPayload[1 + DIRECT_CONNECT_CODE_SIZE];
+        findOpponentPayload[0] = static_cast<u8>(requestedMode);
+        memcpy(findOpponentPayload + 1, directConnectCode, DIRECT_CONNECT_CODE_SIZE);
+        EXIPacket::CreateAndSend(EXICommand::CMD_FIND_OPPONENT, findOpponentPayload, sizeof(findOpponentPayload));
 
         OSCreateThread(&thread, Netplay::StartMatching, NULL, stack + 0x4000, 0x4000, 31, 0);
         OSResumeThread(&thread);
