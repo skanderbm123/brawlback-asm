@@ -423,30 +423,48 @@ yet**):
   (`electron-builder.json`) - Brawlback doesn't have its own replay format
   yet (FAQ.md: "still in the works"), so there's nothing confirmed to
   rename this to. Don't invent one.
-- The entire Dolphin-download backend (`src/dolphin/install/fetchLatestVersion.ts`,
-  `installation.ts`): still queries `process.env.SLIPPI_GRAPHQL_ENDPOINT`
-  (Slippi's own backend), and `.env.example` has Firebase config +
-  `SLIPPI_WS_SERVER`/`SLIPPI_GRAPHQL_ENDPOINT` all as unset `example`
-  placeholders. This is a real, structural gap: the launcher has no working
-  connection to whatever Brawlback/Lylat's actual backend is. **This isn't
-  something to guess at or fabricate** - it needs either real
-  Brawlback/Lylat API access (this session has none - didn't probe lylat.gg
-  beyond its public download page, which only has static
-  version-specific download links, not an API) or a decision from the team
-  on what the launcher should actually talk to. Concretely, the download
-  page (`lylat.gg/download`) lists a real, versioned build - **"Lylat
-  Dolphin" v5.0 for Brawl**, with direct Linux/Windows/macOS download
-  URLs - which might be all the launcher actually needs to hit (static
-  URLs, no GraphQL/Firebase needed at all) rather than replicating Slippi's
-  whole account/backend stack. Worth checking those exact download URLs
-  next, and/or asking the user/Discord whether Brawlback runs any backend
-  beyond what Lylat already provides.
 - `install-related macOS path hardcodes "Slippi Dolphin.app"`
-  (`installation.ts` line ~28) and similar Slippi-specific naming deeper in
-  the Dolphin-management code - left alone since fixing it meaningfully
-  requires knowing the real Brawlback Dolphin build's actual app bundle
-  name/structure, which depends on resolving the backend question above
-  first.
+  (`installation.ts` line ~28) - left alone since the real Brawlback/Lylat
+  Dolphin build's actual `.app` bundle name on macOS isn't confirmed (only
+  checked the Linux/Windows zips directly; the macOS one is presumably
+  named similarly but wasn't downloaded/inspected this session).
+- `slippi.service.ts`'s separate GraphQL usage (user auth via Firebase,
+  play-key validation, user renaming, `MUTATION_INIT_NETPLAY`) - this is
+  Slippi's own accounts backend, a much bigger and less certain question
+  than the Dolphin download turned out to be. `lylat.gg` itself has its own
+  "Sign In/Register" on the website, which suggests accounts/auth might be
+  handled entirely by Lylat's own web platform, with the launcher not
+  needing an equivalent auth layer of its own at all - but that's a real
+  guess, not confirmed. Didn't touch this; needs a team/Discord answer on
+  whether the launcher needs *any* accounts integration, and if so, what it
+  should actually call.
+
+**UPDATE, same session, later: the Dolphin-download gap above is now
+actually fixed** (commit `f2f6cad` in the local launcher clone), not just
+scoped. Confirmed via `lylat.gg/download` that the real download links for
+Brawl are `https://github.com/project-lylat/dolphin/releases/download/5.0/LylatDolphin-{linux,windows,macos}.{zip}`
+(exact URLs, fetched directly, not inferred). Rewrote
+`fetchLatestVersion.ts` to hit GitHub's stable `releases/latest/download/<asset>`
+alias (always redirects to whatever's actually current, so these links never
+need manual updates) instead of the dead `SLIPPI_GRAPHQL_ENDPOINT` call, and
+recovers the version number by reading the redirect's `Location` header
+rather than needing any API access. **Verified for real, not just
+typechecked** - ran it against the live network with `ts-node` and it
+correctly resolved version `"5.0"` and working download URLs for all three
+platforms, right now. Also fixed a real bug this exposed:
+`installation.ts`'s `_isOutOfDate` called `semver.lt()` directly on values
+like `"5.0"` and Dolphin's own `"5.0-19870"`-style `--version` output -
+neither is valid strict semver, so `semver.lt` throws rather than compares.
+Never reached before since the old GraphQL call never returned real data to
+begin with. Fixed with `semver.coerce()` on both sides first.
+
+This means the launcher's core "download and keep Dolphin up to date" loop
+is now wired to something real. What's still missing for a genuinely
+functional launcher: the accounts/auth question above, actual UI testing
+(this sandboxed session has no display - could `yarn install` and typecheck,
+never actually opened the Electron window), and likely more Slippi-specific
+assumptions deeper in the Dolphin config/settings code
+(`config/config.ts`'s `setSlippiSettings`, etc.) not yet audited.
 
 **Build/verify setup for next time**: `cd
 /workspace/brawlback-launcher && yarn install` (took ~65s, works cleanly on
