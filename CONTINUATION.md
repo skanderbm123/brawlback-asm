@@ -18,9 +18,76 @@ context for prioritization, not something to file or comment on.
 
 **Read this section before trusting anything below dated 2026-07-27 or
 earlier about "Project-Plus-Dolphin" being the emulator fork that pairs with
-this ASM code. It's wrong. This section corrects it.**
+this ASM code. It's wrong, or at least more complicated than it looked. This
+section corrects and complicates it, in that order — read both parts.**
 
-### The actual pairing: `Brawlback-Team/dolphin`, not `Project-Plus-Dolphin`
+### An important wrinkle: which line is actually "current" for the team?
+
+Read `Brawlback-Team/brawlback-wiki`'s `FAQ.md` (cloned at
+`/workspace/brawlback-wiki`) before assuming everything below is a clean,
+settled correction. It's dated "Current state of affairs 2026" and says,
+verbatim:
+
+> The Alpha release will be a PR into P+ Dolphin with an additional syringe
+> plugin... It will be like normal netplay where you'll open Netplay, host a
+> lobby, and send a connect code to your opponent... **Essentially the Alpha
+> will just be regular netplay but using Rollback instead of Delay Based, no
+> matchmaking, no custom menu's, etc.** This is being done to get the netcode
+> out faster...
+>
+> The Full release will be a much more Slippi-eqsue experience. A launcher
+> for the application, in-menu matchmaking, fixed replays for rollback...
+
+Read plainly, this says: **the near-term "Alpha" (what issue #1's title
+literally names - "Fix Rollback Netcode for **Alpha**") is `Project-Plus-Dolphin`
++ stock Dolphin Netplay UI (host code, no custom matchmaking, no custom
+menus), and is explicitly meant to become a PR into `Project-Plus-Dolphin`
+itself.** That's the opposite framing from the "Project-Plus-Dolphin is a
+dead end, ignore it" conclusion two sections down would suggest in isolation.
+Under this reading: `project-plus-fork` (this repo) /
+`Project-Plus-Dolphin:rollback`+`linux-fixes` (the "dumpall" rewrite,
+2026-07-27 section) isn't a side experiment — **it may be the team's actual
+current Alpha-track priority**, and issue #1 may be correctly filed after
+all (just against an unfinished, WIP codebase - "theoretically functional...
+TODO general code cleanliness, testing" per its own commit messages).
+
+Meanwhile `savestate-efficiency` (this repo, what the user's fork and all of
+this session's work - Stadium fix, #74, #72 - is built on) + its real
+Dolphin pair `Brawlback-Team/dolphin` has a **complete, working-looking**
+custom matchmaking system (ENet, a real server at `lylat.gg`, Ranked/
+Unranked/Direct/Teams modes) - which sounds like substantial **Full release**
+scope work, already built. `savestate-efficiency`'s ASM code already sends
+`CMD_FIND_OPPONENT`/matchmaking-specific commands, which wouldn't make sense
+if it were only ever meant to pair with plain stock Netplay.
+
+**One plausible reconciliation** (not confirmed, just the most consistent
+story available from what's readable in these repos): the team built the
+full custom-matchmaking system first (`savestate-efficiency` +
+`Brawlback-Team/dolphin`), then decided to ship something simpler and sooner
+(FAQ: "to get the netcode out faster") by stripping back to just
+rollback-on-stock-netplay for a first Alpha, which is the `project-plus-fork`
+/ `Project-Plus-Dolphin:rollback` line — making `savestate-efficiency` +
+`Brawlback-Team/dolphin` the **earlier, more feature-complete, but currently
+secondary/paused** line, and `project-plus-fork` the **current near-term
+priority**, even though it's less finished. This is a plausible reading of
+the evidence, not a confirmed fact — **this needs a real answer from the
+user or the Brawlback Discord, not more code archaeology.** Flagging clearly
+rather than picking one silently: the user's 2026-07-27 answer to "keep
+building on savestate-efficiency vs. track the dumpall rewrite" was made
+*before* this FAQ was found, so it's worth re-asking with this context if
+they have a spare moment, or asking in the Brawlback Discord
+(`discord.gg/dzYRN32k4D`, linked from `GHIDRA.md`) directly.
+
+**What this session did in the meantime**: kept working on `savestate-efficiency`
+(all of today's commits below are on it) since it's the safer, most mature,
+already-partially-verified line regardless of which one the team currently
+prioritizes, and since switching now would orphan the Stadium/#74/#72 work
+already done and build-verified there. If the user (or Discord) confirms
+`project-plus-fork` is actually the priority, that work isn't wasted -
+`savestate-efficiency` is still a real, functioning line worth having fixed
+- it just means *future* sessions should shift focus there.
+
+### The actual pairing (for the `savestate-efficiency` line): `Brawlback-Team/dolphin`, not `Project-Plus-Dolphin`
 
 `Brawlback-Team/Project-Plus-Dolphin` has **zero** Brawlback-related code on
 its `master` branch, and the only Brawlback EXI implementation anywhere in it
