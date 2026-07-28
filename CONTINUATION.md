@@ -87,6 +87,43 @@ already done and build-verified there. If the user (or Discord) confirms
 `savestate-efficiency` is still a real, functioning line worth having fixed
 - it just means *future* sessions should shift focus there.
 
+**UPDATE, same session, later**: found strong evidence this IS resolved, in
+favor of `savestate-efficiency` + `Brawlback-Team/dolphin` being the real,
+live, currently-deployed system, and the wiki FAQ simply being stale:
+
+- `lylat.gg` is a real, live site (HTTP 200, confirmed), run by a *separate*
+  community project (`project-lylat` on GitHub) that hosts matchmaking for
+  multiple Slippi-ENet-compatible mods, not just Brawlback. Its `/download`
+  page lists a real, versioned build: **"Lylat Dolphin" v5.0, for Super Smash
+  Bros. Brawl**, with Linux/Windows/macOS downloads, plus setup instructions
+  crediited to "the Brawlback Team" for playing mods like P+.
+- `Brawlback-Team/dolphin`'s `Matchmaking.cpp` hardcodes
+  `MM_HOST_PROD = "lylat.gg"` - i.e. this exact codebase is written to talk
+  to the exact live server that exists today. That's not something a dead or
+  superseded line would have live-coded in.
+- An official `@BrawlbackTeam` tweet (old - Twitter snowflake ID places it
+  around 2022, so this has been running for years, not new) announced
+  `@ProjectLylat` "officially released the Brawl matchmaking build to the
+  public... beta for Brawl and Project+ matchmaking is now OPEN for
+  everyone... No paywalls. No restrictions." This is long-standing,
+  established infrastructure, not a stale plan.
+
+Best current read: the wiki's `FAQ.md` "Alpha vs Full release" framing
+predates (or was simply never updated after) the matchmaking beta going
+public, and reality has since moved past that "stock netplay only" Alpha
+description into the real matchmaking system this session has been building
+on all along. **`savestate-efficiency` + `Brawlback-Team/dolphin` is the
+correct line to keep building on** — not because the earlier ambiguity was
+wrong to flag, but because it's now resolved with real evidence. Didn't
+confirm the *exact* relationship between `Brawlback-Team/dolphin` and
+whatever `project-lylat` actually deploys as "Lylat Dolphin" (could be a
+direct build of it, or a further downstream fork - `project-lylat/dolphin`
+exists on GitHub too, forked directly from `dolphin-emu/dolphin`, default
+branch `lylat/dolphin-matchmaking`, not yet compared line-by-line against
+`Brawlback-Team/dolphin`) - if a future session wants to fully close that
+loop, that's where to look next. Didn't chase it further today because the
+practical answer (which line to build on) is already clear enough to act on.
+
 ### The actual pairing (for the `savestate-efficiency` line): `Brawlback-Team/dolphin`, not `Project-Plus-Dolphin`
 
 `Brawlback-Team/Project-Plus-Dolphin` has **zero** Brawlback-related code on
