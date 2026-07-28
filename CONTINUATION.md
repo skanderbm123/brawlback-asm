@@ -381,6 +381,81 @@ periodically re-checking `project-plus-fork` for a real merge/release seems
 lower-risk than adopting an admittedly-incomplete rewrite this session
 couldn't test either.
 
+### The user's stated end goal, and the launcher
+
+2026-07-28, later in the same session: the user clarified their real target
+is the full experience — **working rollback + a launcher**, Slippi-esque,
+not just the netcode. This matches the "Full release" scope in
+`brawlback-wiki/FAQ.md` (launcher, in-menu matchmaking, replays).
+
+There's a fourth repo for this: `Brawlback-Team/brawlback-launcher`
+(Electron + React + TypeScript, GPL-3.0, forked from Slippi's own launcher
+at commit `15db4bd`). Cloned read-only at `/workspace/brawlback-launcher`
+this session (not yet forked to `skanderbm123` — same cross-owner
+add_repo/fork limitation as `Brawlback-Team/dolphin`, see above; ask the user
+to fork this one too when next in touch, same as `dolphin`).
+
+**State found**: almost entirely un-rebranded Slippi Launcher scaffolding.
+Fixed the safe, unambiguous parts (commit `2269126`, **local-only in the
+`/workspace/brawlback-launcher` clone — not pushed anywhere, no fork exists
+yet**):
+- `package.json`/`electron-builder.json`/`README.md`: name, productName,
+  description, repository URL, author, appId, artifact names, protocol
+  scheme, clone instructions - all still said "Slippi Launcher" /
+  `project-slippi/slippi-launcher`.
+- **Real bug, not just cosmetic**: `electron-builder.json`'s
+  `publish.owner`/`repo` was `project-slippi`/`slippi-launcher` - as
+  configured, a built app's auto-updater would check the *wrong, unrelated*
+  repo's GitHub releases. Fixed to `Brawlback-Team`/`brawlback-launcher`.
+- **Also fixed, unrelated to rebranding**: `dolphin.service.mock.ts`'s
+  `MockDolphinClient` didn't match the real `DolphinService` interface
+  (`launchNetplayDolphin` had a bogus `{bootToCss}` param nothing calls it
+  with - checked every real call site; `setMod`/`downloadDefaultMod` were
+  missing entirely, added at some point for Brawlback's mod-switching
+  feature but the mock never got updated). `npx tsc --noEmit -p
+  tsconfig.json` was NOT clean before this fix, IS clean after. Also fixed
+  a genuinely broken `package.json` field (`devEngines.node: ">=12.x"` - an
+  invalid format that made every `npm`/`npx` invocation error out entirely
+  on this newer npm; removed, since `engines.node` already covers it).
+
+**Deliberately NOT touched, and why**:
+- `.slp` file association / "Slippi File Format" description
+  (`electron-builder.json`) - Brawlback doesn't have its own replay format
+  yet (FAQ.md: "still in the works"), so there's nothing confirmed to
+  rename this to. Don't invent one.
+- The entire Dolphin-download backend (`src/dolphin/install/fetchLatestVersion.ts`,
+  `installation.ts`): still queries `process.env.SLIPPI_GRAPHQL_ENDPOINT`
+  (Slippi's own backend), and `.env.example` has Firebase config +
+  `SLIPPI_WS_SERVER`/`SLIPPI_GRAPHQL_ENDPOINT` all as unset `example`
+  placeholders. This is a real, structural gap: the launcher has no working
+  connection to whatever Brawlback/Lylat's actual backend is. **This isn't
+  something to guess at or fabricate** - it needs either real
+  Brawlback/Lylat API access (this session has none - didn't probe lylat.gg
+  beyond its public download page, which only has static
+  version-specific download links, not an API) or a decision from the team
+  on what the launcher should actually talk to. Concretely, the download
+  page (`lylat.gg/download`) lists a real, versioned build - **"Lylat
+  Dolphin" v5.0 for Brawl**, with direct Linux/Windows/macOS download
+  URLs - which might be all the launcher actually needs to hit (static
+  URLs, no GraphQL/Firebase needed at all) rather than replicating Slippi's
+  whole account/backend stack. Worth checking those exact download URLs
+  next, and/or asking the user/Discord whether Brawlback runs any backend
+  beyond what Lylat already provides.
+- `install-related macOS path hardcodes "Slippi Dolphin.app"`
+  (`installation.ts` line ~28) and similar Slippi-specific naming deeper in
+  the Dolphin-management code - left alone since fixing it meaningfully
+  requires knowing the real Brawlback Dolphin build's actual app bundle
+  name/structure, which depends on resolving the backend question above
+  first.
+
+**Build/verify setup for next time**: `cd
+/workspace/brawlback-launcher && yarn install` (took ~65s, works cleanly on
+Node 22 despite the repo listing `engines.node >=12` - only real
+compatibility issue found was the `devEngines` bug above, now fixed).
+`npx tsc --noEmit -p tsconfig.json` for a typecheck (couldn't run the actual
+Electron GUI in this sandboxed, display-less environment, so this is as far
+as verification went - no runtime testing of the app itself).
+
 ## The goal
 
 The user's ultimate goal: a **ranked online mode for Brawl / Project M /
