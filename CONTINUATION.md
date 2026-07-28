@@ -1,7 +1,7 @@
 # Continuation brief: Brawlback rollback netcode work
 
 Read this first if you're a fresh Claude Code session (or a human) picking this
-up cold. Written 2026-07-22, updated 2026-07-23, updated again 2026-07-27. The
+up cold. Written 2026-07-22, updated 2026-07-23, 2026-07-27, 2026-07-28. The
 user (skanderbm123) will be unreachable / without a PC for about two weeks
 starting around 2026-07-22 — this doc exists so work can continue without them
 around to give context.
@@ -14,7 +14,191 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
-## 2026-07-27 session: fork sync + a major upstream finding
+## 2026-07-28 session: THE REAL DOLPHIN FORK, and a real root cause for #1
+
+**Read this section before trusting anything below dated 2026-07-27 or
+earlier about "Project-Plus-Dolphin" being the emulator fork that pairs with
+this ASM code. It's wrong. This section corrects it.**
+
+### The actual pairing: `Brawlback-Team/dolphin`, not `Project-Plus-Dolphin`
+
+`Brawlback-Team/Project-Plus-Dolphin` has **zero** Brawlback-related code on
+its `master` branch, and the only Brawlback EXI implementation anywhere in it
+(`rollback`/`linux-fixes` branches) speaks the *new*, incompatible
+"dumpall"-pivot protocol documented below (2026-07-27 section) — confirmed
+again today. What went unnoticed until today: **the Brawlback-Team GitHub org
+has a separate repo, `Brawlback-Team/dolphin`**, not listed anywhere in this
+doc's repo map before now, with a branch called `savestates-efficiency-v2`.
+Its `EXICommand` enum
+(`Source/Core/Core/Brawlback/BrawlbackUtility.h`) matches this repo's
+`Brawlback-Online/include/exi_packet.h` **exactly**, byte for byte
+(`CMD_FIND_OPPONENT=5`, `CMD_START_MATCH=13`, etc.) — this is the real,
+correct Dolphin-side counterpart to `savestate-efficiency`. Also worth
+knowing: the org has two more repos not previously in this doc's map —
+`brawlback-common` (the shared EXI-struct submodule, already known, just
+confirming the name) and `brawlback-wiki` (real docs — `GETTING_STARTED.md`,
+`ROLLBACK.md`, `REPLAYS.md`, `GHIDRA.md`, `FAQ.md` — read `GHIDRA.md` if you
+have Ghidra + Discord access, see below).
+
+**Found via**: the org's GitHub profile page lists all 8 repos with one-line
+descriptions - a 30-second check that should have happened before yesterday's
+deep dive into Project-Plus-Dolphin. If a repo map in this doc ever again
+claims "X is the Y fork" without that having been checked against the actual
+org repo list, don't trust it blindly - re-verify.
+
+**This resolves yesterday's "no matching Dolphin implementation" blocker on
+issue #72 entirely** — see below. It also means the `IsInRollbackMode`/
+`m_rollback_mode` "whole-session flag" hypothesis for issue #1 in the
+"Brawlback's open issues" section further down was based on reading
+Project-Plus-Dolphin's `NetPlayClient.h` — **the wrong repo's code.**
+`Brawlback-Team/dolphin` has no `IsInRollbackMode` anywhere. That whole
+hypothesis is superseded by the real one below.
+
+**Status of forking it**: skanderbm123 does not yet have a fork of
+`Brawlback-Team/dolphin`. This session's tooling can only fork/push to repos
+already in its configured scope (`skanderbm123/brawlback-asm`, `Ishiiruka`,
+`slippi-ssbm-asm`, `slippi-ssbm-c`, `Project-Plus-Dolphin`) and adding a
+repo from a different owner (`Brawlback-Team`) mid-session isn't supported
+once other sources are attached. **Asked the user 2026-07-28; they chose to
+fork it themselves** (github.com/Brawlback-Team/dolphin → Fork button) rather
+than have this session create a plain non-fork copy. If you're a fresh
+session and `skanderbm123/dolphin` exists now, add it, clone
+`savestates-efficiency-v2`, and apply the Dolphin-side fix described below
+under issue #72 — it's small and exact, no need to re-derive it.
+
+### Issue #1 ("cursors desync at menus") — real root cause found, not fixed
+
+Filed against `Project-Plus-Dolphin`, almost certainly misfiled (an easy
+mistake — this session made the identical one at first). The actual netcode
+this bug would live in is `Brawlback-Team/dolphin` + this repo
+(`brawlback-asm`), both cloned/available. Investigated for real this time,
+using actual code instead of guesswork:
+
+**In `brawlback-asm`'s `Rollback_Hooks.cpp`, `updateLowHook()` is the *only*
+place local pad input gets redirected/relayed for netplay purposes, and it's
+entirely gated behind `if (Netplay::IsInMatch())`:**
+```cpp
+void updateLowHook() {
+    Utils::SaveRegs();
+    if(Netplay::IsInMatch()) {
+        memmove(&FrameLogic::inputBuffer, &g_gfPadSystem->m_gameGcnPads[Netplay::getGameSettings().localPlayerPort], sizeof(FrameLogic::inputBuffer));
+        Util::InjectBrawlbackPadToPadStatus(&g_gfPadSystem->m_gameGcnPads[Netplay::getGameSettings().localPlayerPort], BrawlbackPad(), Netplay::getGameSettings().localPlayerPort);
+    }
+    Utils::RestoreRegs();
+}
+```
+Right above it, `fixPadInconsistency()` explicitly calls the game's own
+native `g_gfPadSystem->updateLow()` **only when NOT in a match** — i.e. the
+code deliberately lets menus run on raw, un-relayed native pad input.
+**Grepped the whole repo for any CSS/menu-specific pad-relay hook — there
+is none.** Menu-phase input is never synchronized between the two clients at
+all, by design (or by an acknowledged gap — the comments don't say which).
+
+**On the Dolphin side, `Brawlback-Team/dolphin`'s `EXIBrawlback.cpp`,
+`ProcessGameSettings()` has an explicit, maintainer-acknowledged shortcut:**
+```cpp
+// TODO: again assign proper stuff based on reality and since we really don't know what the player
+// port is right now since netplay menu is not being used for this atm, we are going to assume
+// that always p1 vs p1 are getting connected when netlay menu is set, get player port from game.
+mergedGameSettings.localPlayerPort = 0;  // p1
+```
+This is set unconditionally — **both host and joining client get
+`localPlayerPort = 0`**, not one 0 and one 1. `localPlayerPort` is the array
+index brawlback-asm uses into `g_gfPadSystem->m_gameGcnPads[...]` (grepped -
+this is its only real consumer) to decide whose physical controller counts
+as "the local player" for rollback purposes.
+
+**Combined hypothesis**: menu/CSS-phase cursor movement is never relayed
+between clients (only gated-behind-`IsInMatch()` code exists for that), so
+each client only ever renders its own local input — if Brawl's CSS scene is
+still running in its native *local 2-player* mode (both P1 and P2 cursors
+visible and driven by whatever's plugged into the local machine's controller
+ports), each client would show a different, uncoordinated picture of "where
+is the other player's cursor," which matches the reported symptom exactly.
+Slippi's own real, working precedent for online CSS
+(`slippi-ssbm-asm/Online/Menus/CSS/HandleInputsOnCSS.asm`, cloned in full at
+`/workspace/slippi-ssbm-asm`) reinforces this: it does **not** synchronize
+live cursor position at all — each player makes their pick entirely locally,
+and only the final locked-in choice (`FN_TX_LOCK_IN`, sending char/color/stage
+once) goes over the network. If Brawlback's CSS hasn't been adapted away from
+showing two live, locally-driven cursors, that mismatch would look exactly
+like "desync."
+
+**Why this wasn't fixed today**: same category of blocker as issue #72's
+text-entry widget. A real fix means hooking Brawl's actual CSS scene code to
+either (a) relay cursor state like `updateLowHook` does for gameplay, or (b)
+adapt the scene to a single-local-cursor model like Slippi's. Either way
+needs Brawl-specific CSS memory offsets/struct layout that aren't in
+BrawlHeaders and aren't safe to guess (Slippi's own fix uses Melee-specific
+r13-relative offsets like `-0x49a7(r13)` that don't transfer to Brawl at
+all). **Needs the `brawl` decomp repo or the Ghidra OpenBrawl-CBM shared
+project (`brawlback-wiki/GHIDRA.md` — needs the actual Ghidra desktop app +
+a Discord invite for credentials, not available in this sandboxed session)**
+before real hook code can be written safely. This is a solid, evidence-backed
+diagnosis to hand to whoever has that access next, not a guess.
+
+### Issue #72 — corrected, and the remaining fix is now exact and tiny
+
+Yesterday's `CMD_DIRECT_CONNECT` was invented against the wrong repo and has
+been **removed** (commit `3ee5792` today, brawlback-asm). The real protocol
+was hiding in plain sight in `Brawlback-Team/dolphin`'s
+`EXIBrawlback.cpp`, `handleFindMatch()`:
+```cpp
+Matchmaking::MatchSearchSettings search;
+std::string connectCode;
+
+// TODO: uncomment these lines when payload includes the actual mode and connect codes
+#ifdef REMOVE_THIS_WHEN_PAYLOAD_IS_SET
+search.mode = (SlippiMatchmaking::OnlinePlayMode)payload[0];
+std::string shiftJisCode;
+shiftJisCode.insert(shiftJisCode.begin(), &payload[1], &payload[1] + 18);
+shiftJisCode.erase(std::find(shiftJisCode.begin(), shiftJisCode.end(), 0x00), shiftJisCode.end());
+connectCode = shiftJisCode;
+#else
+search.mode = Matchmaking::OnlinePlayMode::UNRANKED;
+#endif
+```
+`REMOVE_THIS_WHEN_PAYLOAD_IS_SET` is `#define`d nowhere in the codebase
+(checked with grep) — this isn't a design decision, it's a TODO literally
+waiting for the ASM side to send the right payload, which is now done
+(`brawlback-asm` commit `3ee5792`): `setNextAnyOkirakuCaseFive()` now sends
+`CMD_FIND_OPPONENT` with a 19-byte payload (mode byte matching
+`Matchmaking::OnlinePlayMode` exactly, then an 18-byte connect code),
+defaulting to `UNRANKED`/all-zero so nothing changes until something calls
+`NetMenu::SubmitDirectConnectCode()`.
+
+**The Dolphin-side fix, once `skanderbm123/dolphin` exists** (small, exact,
+already verified against the real source — just needs someone to actually
+apply + build it, this session couldn't push there):
+```cpp
+// In handleFindMatch(), replace the #ifdef/#else/#endif block with just the
+// "then" branch, unconditionally:
+Matchmaking::MatchSearchSettings search;
+std::string connectCode;
+
+search.mode = (Matchmaking::OnlinePlayMode)payload[0];
+std::string shiftJisCode;
+shiftJisCode.insert(shiftJisCode.begin(), &payload[1], &payload[1] + 18);
+shiftJisCode.erase(std::find(shiftJisCode.begin(), shiftJisCode.end(), 0x00), shiftJisCode.end());
+connectCode = shiftJisCode;
+```
+(Note: the original commented-out line says
+`(SlippiMatchmaking::OnlinePlayMode)payload[0]` — that's almost certainly a
+copy-paste leftover from porting Slippi's own code; the type actually in
+scope is `Matchmaking::OnlinePlayMode`, defined right there in
+`Matchmaking.h`. Double check this compiles before assuming the cast type -
+this session couldn't build Dolphin to verify.)
+
+**What's still genuinely blocked after that fix lands**: nothing calls
+`SubmitDirectConnectCode` with a real player-typed code yet, because reading
+text out of Brawl's CSS name-entry widget still needs the same
+offsets-unknown blocker as before (`MuSelctChrNameEntry`, opaque 0x94-byte
+struct in BrawlHeaders). Slippi's real precedent
+(`HandleInputsOnCSS.asm`'s `FN_LOAD_CODE_ENTRY`) confirms Melee reuses its own
+nametag-entry widget for this exact purpose, setting a
+`NAME_ENTRY_MODE` flag and a lock-in callback — strong confirmation this is
+the right general shape for Brawl too, just needs Brawl's own offsets
+(Ghidra or `brawl` decomp repo, same as issue #1 above).
 
 All 5 forks were checked against their upstreams this session
 (`git fetch upstream`, compare branches — no merges pushed upstream, per the
@@ -134,11 +318,13 @@ from GitHub instead):
 
 | Repo | Fork | Upstream | Branch | Role |
 |---|---|---|---|---|
-| Project-Plus-Dolphin | skanderbm123/Project-Plus-Dolphin | Brawlback-Team/Project-Plus-Dolphin | `rollback` (as of 2026-07-27 — the fork didn't actually have this branch until this session pushed it from upstream; before that the fork only had `master`) | Dolphin/Project+ fork. Emulator-side netcode. Core file: `Source/Core/Core/HW/EXI/EXI_Brawlback.cpp` (554 lines, EXI command dispatcher) + `Source/Core/Core/NetPlayClient.cpp`/`.h` (~5000 lines, the actual rollback state machine, extended from vanilla Dolphin netplay with `m_rollback_mode`/`IsInRollbackMode()`). |
+| **dolphin** | **skanderbm123/dolphin — does not exist yet, user is forking it (see 2026-07-28 section above)** | **Brawlback-Team/dolphin** | **`savestates-efficiency-v2`** | **THE REAL emulator fork that pairs with this repo's `savestate-efficiency` protocol.** Core files: `Source/Core/Core/HW/EXI/EXIBrawlback.cpp` + `Source/Core/Core/Brawlback/Netplay/Matchmaking.cpp` (Slippi-derived matchmaking client, talks to Brawlback's own server at `lylat.gg` over ENet - this is what "Lylat" in issue #72 refers to). Also has a dedicated Qt settings pane (`DolphinQt/Settings/BrawlbackPane.cpp`). |
+| ~~Project-Plus-Dolphin~~ | skanderbm123/Project-Plus-Dolphin | Brawlback-Team/Project-Plus-Dolphin | `rollback` | **NOT the emulator fork that pairs with this repo (corrected 2026-07-28) — `master` has zero Brawlback code, and `rollback`/`linux-fixes` speak an incompatible, unrelated "dumpall"-rewrite protocol (see 2026-07-27 section). Kept synced in case that rewrite matures later, but don't treat it as "the" Dolphin fork.** |
 | brawlback-asm | skanderbm123/brawlback-asm | Brawlback-Team/brawlback-asm | `savestate-efficiency` (default) | Syringe-injected ASM/C++ that runs *inside* the game via SD-card-loaded plugin. Core file: `Brawlback-Online/source/Rollback_Hooks.cpp` (2000+ lines) — game-side frame loop hooks, fixed RNG seed `0x496ffd00`, `relevantHeaps` save-state allowlist. **This is where the Stadium fix (below) was committed.** |
-| Ishiiruka | skanderbm123/Ishiiruka | project-slippi/Ishiiruka | `slippi` (sparse-checked-out: `Source/Core/Core/HW`, `NetPlayClient.*`, `State.*`, `Slippi/`) | Slippi's Dolphin fork, for comparison. Core file: `Source/Core/Core/HW/EXI_DeviceSlippi.cpp` (3644 lines) — Slippi's equivalent of EXI_Brawlback.cpp, much more mature/complete. |
-| slippi-ssbm-asm | skanderbm123/slippi-ssbm-asm | project-slippi/slippi-ssbm-asm | default | Slippi's game-side ASM injection code (Melee equivalent of brawlback-asm). **`Online/Core/Hacks/Stadium/`** is the key directory — Melee's Pokemon Stadium desync fixes, the direct precedent for the fix below. |
+| Ishiiruka | skanderbm123/Ishiiruka | project-slippi/Ishiiruka | `slippi` (sparse-checked-out: `Source/Core/Core/HW`, `NetPlayClient.*`, `State.*`, `Slippi/`) | Slippi's Dolphin fork, for comparison. Core file: `Source/Core/Core/HW/EXI_DeviceSlippi.cpp` (3644 lines) — Slippi's equivalent of EXIBrawlback.cpp, much more mature/complete. |
+| slippi-ssbm-asm | skanderbm123/slippi-ssbm-asm | project-slippi/slippi-ssbm-asm | default | Slippi's game-side ASM injection code (Melee equivalent of brawlback-asm). **`Online/Core/Hacks/Stadium/`** is the key directory for the Stadium fix precedent; **`Online/Menus/CSS/`** (esp. `HandleInputsOnCSS.asm`, `TextEntryScreen/`) is the key directory for issues #1 and #72. |
 | slippi-ssbm-c | skanderbm123/slippi-ssbm-c | project-slippi/slippi-ssbm-c | default | m-ex-based C code for Slippi — turned out to be CSS/menu/ranked-mode UI code, not core netcode. Lower priority than the ASM repo; only skimmed, not deeply mined yet. |
+| brawlback-wiki | not forked (read-only reference so far) | Brawlback-Team/brawlback-wiki | main | Real project docs: `GETTING_STARTED.md`, `ROLLBACK.md`, `REPLAYS.md`, `GHIDRA.md` (shared reverse-engineering server, needs Ghidra desktop app + Discord), `FAQ.md`. Worth a full read next session. |
 
 ## What's been done: the Stadium transformation freeze fix
 
@@ -291,22 +477,22 @@ no more visual transformation once a match starts.
 Ranked by what's most valuable to tackle next:
 
 1. **[Project-Plus-Dolphin #1](https://github.com/Brawlback-Team/Project-Plus-Dolphin/issues/1)
-   "Fix Rollback Netcode for Alpha"** — cursors desync at menus; even the
-   maintainers aren't sure if it's a rollback bug or a netcode bug. **Highest
-   priority, blocking issue.** NOT root-caused yet. Working hypothesis (from
-   reading `NetPlayClient.h`/`.cpp`): `m_rollback_mode`/`IsInRollbackMode()`
-   is a whole-session flag (set once from a network packet, true for the
-   entire netplay session including menus), but the ASM side
-   (`Rollback_Hooks.cpp`) only engages its rollback frame hooks once
-   `Netplay::IsInMatch()` is true — meaning CSS/menu-phase input sync might be
-   falling through to a separate, less-synchronized code path (see the large
-   `NetMenu` namespace in `Rollback_Hooks.h`/`.cpp`, which is a totally
-   separate hook set from the `FrameAdvance`/`FrameLogic` rollback pipeline).
-   **This needs live two-client testing to actually diagnose** — not
-   something resolvable by reading code alone. If you have two machines (or
-   two Dolphin instances) to test with, start there. Still untouched as of
-   2026-07-23 — the remote session that did the Stadium build had no second
-   machine/Dolphin instance to test with either.
+   "Fix Rollback Netcode for Alpha"** — cursors desync at menus. **Likely
+   misfiled against the wrong repo (see 2026-07-28 section at the top of this
+   doc) — the real netcode lives in `Brawlback-Team/dolphin` +
+   `brawlback-asm`.** ~~Working hypothesis from reading
+   `NetPlayClient.h`/`.cpp`: `m_rollback_mode`/`IsInRollbackMode()`...~~ **That
+   hypothesis was built from `Project-Plus-Dolphin`'s code and is superseded -
+   `Brawlback-Team/dolphin` doesn't even have `IsInRollbackMode`.** The real,
+   evidence-based root cause (found 2026-07-28, see top section): menu-phase
+   pad input is never relayed between clients at all (`updateLowHook`, the
+   only pad-relay code that exists, is entirely gated behind
+   `Netplay::IsInMatch()`), compounded by `Brawlback-Team/dolphin`'s
+   `ProcessGameSettings()` hardcoding `localPlayerPort = 0` for both host and
+   client unconditionally (an explicit, commented TODO, not a guess). Still
+   needs live two-client testing to *confirm*, and a real fix needs Brawl's
+   CSS memory layout (Ghidra or the `brawl` decomp repo) which this session
+   doesn't have - but the diagnosis itself is solid, not speculative anymore.
 2. **The Stadium fix above** — code written AND now confirmed to build/link
    clean (2026-07-23). Only remaining step is an actual in-game netplay test,
    which needs a human with Dolphin + the ISO.
