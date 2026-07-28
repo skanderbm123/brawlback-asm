@@ -466,6 +466,50 @@ never actually opened the Electron window), and likely more Slippi-specific
 assumptions deeper in the Dolphin config/settings code
 (`config/config.ts`'s `setSlippiSettings`, etc.) not yet audited.
 
+**UPDATE, same session, later still**: swept for more hardcoded
+`slippi.gg`/`project-slippi` references actually live in runtime code (not
+just docs/config) and fixed what was safely fixable (commit `b0da467`,
+local-only, same as everything else in this section):
+- `common/constants.ts`: `slippiHomepage` → `lylat.gg`, `socials.twitterId`
+  → `BrawlbackTeam`, `socials.discordUrl` → `discord.gg/dzYRN32k4D` - all
+  three verified against real, confirmed sources this session (the org's
+  actual Twitter link, the wiki's Discord invite), not guessed.
+  `socials.patreonUrl` had no confirmed Brawlback-specific equivalent to
+  point to (lylat.gg does have a donations page, but it's an in-page route,
+  `/donations/new.js`, not cleanly external-linkable) - pointed at the
+  Lylat homepage instead and **removed the Patreon-branded icon/copy in
+  `Footer.tsx`** (keeping a real logo on a link that isn't actually a
+  Patreon link would be actively misleading, worse than just
+  under-branded).
+- `BuildInfo.tsx`'s commit-hash link pointed at
+  `project-slippi/slippi-launcher` instead of this repo.
+- `SavedConnectionItem.tsx`'s outdated-Nintendont warning told users to
+  download from "the Slippi website" - replaced with an honest note that
+  Brawlback's console mirroring isn't built yet, and that Nintendont
+  (GameCube-specific) likely isn't even the right tool for a Wii game like
+  Brawl - rather than a broken/irrelevant link.
+
+`npx tsc --noEmit` and `yarn lint` both clean (0 errors - lint had exactly
+one, a prettier formatting nit in the line this session added, fixed via
+`eslint --fix`; all remaining warnings are pre-existing, in files untouched
+this session).
+
+**Deliberately left alone in this pass** (real, known gaps, not
+oversights): the broader Console/Nintendont mirroring feature area (bigger
+scope - Wii vs. GameCube homebrew loader is a genuine unresolved design
+question, not just a naming fix), and `newsFeed.ts`'s Medium/GitHub-release
+fetching from `project-slippi` (no confirmed Brawlback news source exists
+to point it at instead - currently just shows irrelevant Slippi news to
+Brawlback users, which is wrong but not something to fabricate a fix for).
+
+**Everything in this whole launcher section is sitting as local git commits
+in `/workspace/brawlback-launcher` (currently: `2269126`, `f2f6cad`,
+`b0da467`, in that order on top of the real `Brawlback-Team/brawlback-launcher`
+history) — none of it is pushed anywhere, because no `skanderbm123` fork of
+`brawlback-launcher` exists yet.** Same situation as `Brawlback-Team/dolphin`
+above: ask the user to fork `Brawlback-Team/brawlback-launcher` too, next
+time you're in touch, then push this branch there.
+
 **Build/verify setup for next time**: `cd
 /workspace/brawlback-launcher && yarn install` (took ~65s, works cleanly on
 Node 22 despite the repo listing `engines.node >=12` - only real
