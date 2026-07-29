@@ -1279,6 +1279,51 @@ assuming they're all bugs like the stage one was - most are not:
   proper stuff based on reality... assume p1 vs p1"), so this is consistent
   with an existing documented limitation, not a new/different bug.
 
+### 2026-07-29: #73 - one more theory checked and weakened, static-analysis avenues now exhausted
+
+Took a fresh angle: is there a cross-thread race on the merged costume data?
+`NetMenu::StartMatching` (which drives `CheckIsMatched()` →
+`MergeGameSettingsIntoGame()` → `GMMelee::PopulateMatchSettings()`, the
+function that actually writes `costumeChoices[]`/`isMatchChoicesPopulated`)
+runs on a genuinely separate `OSThread` (`OSCreateThread(&thread,
+Netplay::StartMatching, ...)`), while the main game thread polls
+`Netplay::foundMatch` from several different hooked functions
+(`BBisCompleteMeleeSettingAllMember` etc., each passing it straight into the
+game's own original "is setup complete" polling functions) before
+eventually reaching `BootToScMelee()` → `postSetupMelee` →
+`FillInMeleeObj()`, which reads `costumeChoices[]`. None of these globals
+are `volatile` or otherwise synchronized, which on a true SMP system would
+be a real, classic race condition (write visible to thread A "eventually"
+but not guaranteed by the time thread B reads it).
+
+**But this theory is significantly weakened by one fact**: the Wii's
+Broadway CPU is single-core - `OSThread` is a cooperative/priority-based
+scheduler on one physical core, not true SMP, so the cross-core
+cache/reordering hazards that would make this a real bug on a multi-core
+system mostly don't apply here. Combined with the main thread busy-polling
+`foundMatch` across many game-loop frames before ever proceeding (a wide
+timing margin in wall-clock terms), this doesn't look like a promising lead
+- noting it as **checked and considered unlikely**, not confirmed either
+way, since I can't fully rule out an obscure single-core reordering edge
+case without deeper RVL/OSThread-internals knowledge this session doesn't
+have.
+
+**Where this leaves #73**: every static-analysis-reachable theory this
+session could evaluate has now been checked - struct layout (identical,
+ruled out), merge-index (ruled out, the original code was already right),
+controller-port assumption (ruled out, consistent with the known
+`localPlayerPort=0` limitation), and now cross-thread timing (weakened by
+the single-core CPU). None of them explain "P2 loading in as the first
+secret costume." The remaining candidates all point the same direction as
+issue #1's blocker: something in the actual costume/CSP-rendering
+consumption code (downstream of `m_colorNo`/`m_colorFileNo` -
+`FillInMeleeObj`'s writes into `g_globalMelee`, and whatever Brawl's own
+CSS/character-loading code does with those fields) that this session can't
+safely reverse-engineer without Ghidra/decomp access or a live two-machine
+repro to actually observe what value P2 ends up with. Not re-attempting
+further guesses here without one of those - the highest-value next step
+for #73 specifically is a live test, not more static reading.
+
 ### 2026-07-29: core rollback/savestate audit - one dead class identified (not a bug), rest too risky to touch blind
 
 Went looking for the same class of bug as the endianness/stage fixes
