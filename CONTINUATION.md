@@ -573,6 +573,42 @@ delete once someone's comfortable that `SettingsPage` really is the
 intended direction (this session left them in place rather than deleting
 working, if unreachable, code without being asked to).
 
+**Found a much bigger version of the exact same dead-code pattern -
+deliberately NOT fixed, unlike the Settings one, and here's why.**
+`App.tsx`'s live routing has exactly 3 routes: Home, Settings (now fixed
+above), and `replays/*` → a two-line stub component (`function Replay() {
+return <h3>Replay</h3>; }` - literally just that text, no functionality at
+all). Meanwhile `views/MainView.tsx` - like `SettingsView` before it, never
+imported or rendered *anywhere* in the app, 100% dead code - has a
+complete, real top-level shell: a proper `Header` with a menu, and four
+fully-implemented pages wired up correctly: Home, **Replays** (→ the real
+`ReplayBrowserPage`, a whole feature with its own hooks/components), 
+**Spectate** (→ `SpectatePage`, gated behind `AuthGuard` - real broadcast
+UI with sub-components for sharing gameplay), and **Console Mirror** (→
+`Console`, the Nintendont-based real-hardware mirroring feature from
+earlier in this doc).
+
+**Why this one wasn't just "completed" the way Settings was**: unlike
+`SettingsPage` (where the reduced structure had a specific, confirmed
+Brawlback-adaptation reason - the single-Dolphin-build comment), the
+missing pieces here have a *different*, equally-confirmed reason to
+believe the live app's reduced surface is intentional, not accidental:
+`brawlback-wiki/FAQ.md` explicitly says **both** replays and console
+mirroring are "still in the works" for Brawlback. Spectate needs real
+accounts (`AuthGuard`), which - per the still-unresolved auth question
+elsewhere in this doc - may not even be a Brawlback launcher concern at
+all (Lylat's own website may handle that). Wiring in a fully-built replay
+browser for a replay *format that doesn't exist yet*, or a spectate/console
+UI that depends on backend pieces this session already flagged as
+unconfirmed, risks replacing an honest "not built yet" placeholder with a
+broken-in-a-different-way UI that looks finished but silently does nothing
+useful (or worse, errors trying to parse/find files in a format Brawlback
+hasn't defined). **Left as-is, flagged clearly rather than guessed at** -
+this needs someone who actually knows Brawlback's replay-format and
+accounts status to decide whether `MainView` should be restored (once
+those backend pieces are ready) or `Replay`'s stub should just get a
+better "coming soon" message in the meantime.
+
 **Everything in this whole launcher section is sitting as local git commits
 in `/workspace/brawlback-launcher` (currently: `2269126`, `f2f6cad`,
 `b0da467`, `7968663`, `962d83e`, `9366078`, in that order on top of the real
