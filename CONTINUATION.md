@@ -885,10 +885,40 @@ Ranked by what's most valuable to tackle next:
    reimplementing `NetPlayClient` construction - much safer than inventing
    new threading code. Just noting this so it doesn't need re-deriving, not
    claiming it's ready to write blind.)
-5. Lower priority / less netcode-central: #76 (game-end/CSS-return workflow),
-   #75 (pause workflow cleanup), #73 (P2 costume sync bug — related to #74),
-   #71 (BrawlHeaders repo org migration), #70 (menu game-object reverse
-   engineering).
+5. **[brawlback-asm #73](https://github.com/Brawlback-Team/brawlback-asm/issues/73)
+   "costumes not syncing... P2 loading in as the first secret costume"** -
+   **DONE, real root cause found, fix written - but it lives in
+   `Brawlback-Team/dolphin`, not this repo, and isn't pushed anywhere yet**
+   (local commit `cbfdc87` in `/workspace/brawlback-team-dolphin`, branch
+   `savestates-efficiency-v2` - same "no fork yet" situation as the rest of
+   the Dolphin-side work above). `EXIBrawlback.cpp`'s
+   `ProcessGameSettings()`, host branch, merged the opponent's own
+   character/costume choice by reading
+   `opponentGameSettings->playerSettings[1]` - but confirmed by reading
+   `fillOutGameSettings` in this repo's `Rollback_Hooks.cpp` directly that
+   the client's ASM code *always* sends its own local choice at
+   `playerSettings[0]`, never `[1]`, regardless of which slot it ends up
+   playing as. The function's own `!isHost` branch, right above, already
+   gets this right (reads the host's data from `...[0]`) - the `isHost`
+   branch had the index inverted, most likely a copy/paste-and-flip
+   mistake when mirroring the other branch. Fixed to read `[0]` in both
+   branches. Not build-verified (building all of Dolphin is out of scope
+   for a sandboxed session), but it's a minimal, mechanical one-line-per-field
+   index fix with the exact same shape as the adjacent, already-correct
+   code - high confidence without a full build.
+
+   Worth a general note for whoever next works in this file: this is the
+   *second* host-vs-client player-index mixup found in this same function
+   this project (see `localPlayerPort` in the 2026-07-28 section on issue
+   #1 above) - worth a careful read-through of the rest of
+   `ProcessGameSettings` and the input-exchange/save-state code for a
+   possible third instance of the same class of bug. Checked once this
+   session (grepped for other `playerSettings[1]`/`[0]` mismatches in this
+   file - found none beyond the one just fixed), but a closer, non-grep
+   read of the surrounding rollback/frame-data code wasn't done.
+6. Lower priority / less netcode-central: #76 (game-end/CSS-return workflow),
+   #75 (pause workflow cleanup), #71 (BrawlHeaders repo org migration), #70
+   (menu game-object reverse engineering).
 
 ## Working conventions established so far
 
