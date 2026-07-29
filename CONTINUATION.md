@@ -1189,6 +1189,45 @@ neighborhood, and plausibly meaningful for "unranked actually working": a
 byte-swapped stage ID could easily resolve to an invalid/wrong stage or
 undefined behavior depending on what value it lands on.
 
+### 2026-07-29: wired up real stage selection, replacing hardcoded Battlefield
+
+Following the `stageID` endianness fix, checked whether the merged stage
+choice actually reaches the game and found it didn't: `FillInMeleeObj()` had
+`g_globalMelee.m_meleeInitData.m_stageKind = Stages::Battle;` with a `//
+TODO uncomment and use above line, just testing with battlefield` comment
+directly above a commented-out `melee[STAGE_ID_IDX] = stageChoice;` line -
+leftover pseudocode from before this function was rewritten to use the real
+`g_globalMelee` struct (it references `melee`/unqualified `stageChoice`,
+neither of which resolve in this function's actual scope - it was never
+actually compilable, just a note-to-self, not functioning-then-broken
+code).
+
+Before fixing this, checked the Dolphin clone's `Matchmaking::GetRandomStage()`
+(the function that picks the non-host's random stage) for real supporting
+evidence rather than guessing whether "real" stage selection is actually
+ready: it draws from a deliberately curated `m_allowedStages` list -
+Battlefield, Final Destination, Metal Cavern, Wario Land, **Pokemon Stadium
+2** - with several other stages explicitly commented out (Yoshi's Island,
+Dream Land, Green Hill Zone, Smashville, FoD) as presumably not yet
+rollback-safe. Pokemon Stadium 2's presence lines up directly with this
+session's separate Stadium-transformation fix (see way above) - concrete,
+cross-repo confirmation that this stage-selection system is a real, built
+feature waiting on the ASM side, not a half-finished guess.
+
+**Fixed** (brawlback-asm commit `6d70df1`): replaced the hardcoded
+`Stages::Battle` with `static_cast<Stages::srStageKind>(GMMelee::stageChoice)`
+- `stageChoice` is populated by `PopulateMatchSettings()` from the
+network-merged `GameSettings.stageID` before `isMatchChoicesPopulated` is
+ever set true, so it's always valid by the time `FillInMeleeObj()` reads it.
+Build-verified with a full `make` from the repo root - links cleanly.
+
+**This fix and the endianness fix above are a matched pair**: the
+endianness fix makes `stageID` transmit correctly over EXI; this fix makes
+the game actually use it instead of discarding it for a hardcoded
+Battlefield. Neither one alone would have produced correct stage variety -
+worth remembering that connection if either one is ever reverted in
+isolation.
+
 ### 2026-07-29: audit pass toward "play unranked end-to-end via the launcher"
 
 Goal reframed by the user: work toward being able to play at least unranked
