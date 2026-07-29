@@ -78,8 +78,7 @@ void FillInMeleeObj() {
 
         // melee[P1_CHAR_ID_IDX+1] = 0; // Set player type to human
         // melee[P2_CHAR_ID_IDX+1] = 0;
-        // melee[STAGE_ID_IDX] = stageChoice;
-        g_globalMelee.m_meleeInitData.m_stageKind = Stages::Battle; // TODO uncomment and use above line, just testing with battlefield
+        g_globalMelee.m_meleeInitData.m_stageKind = static_cast<Stages::srStageKind>(GMMelee::stageChoice);
     }
 }
 
