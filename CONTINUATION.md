@@ -1153,6 +1153,42 @@ Ranked by what's most valuable to tackle next:
    genuinely new subsystems (especially "live-update opponent's screen"),
    not a quick fix.
 
+### 2026-07-29: real, build-verified bug found and fixed - missing endianness swap on GameSettings
+
+While re-investigating #73 (see the correction above), traced `CheckIsMatched()`
+in this repo's `Rollback_Hooks.cpp` and found `FixGameSettingsEndianness()`
+(defined at the bottom of `namespace Netplay`, swaps `stageID`, `randomSeed`,
+and every player's `nametag[]`) was **never called anywhere** - confirmed by
+grepping the whole file. Compared this against the two other places raw
+structs get read off EXI: `GetInputsForFrame()` reads a `FrameData` and
+immediately calls its sibling `Util::FixFrameDataEndianness()`; the
+`framesToAdvance` read immediately calls `Utils::swapByteOrder()` directly.
+`CheckIsMatched()` was the only one of the three EXI-read sites skipping its
+fix step - `FixGameSettingsEndianness` looks purpose-built for exactly this
+call site (matching field-for-field) but was simply never wired in, almost
+certainly an oversight rather than a deliberate omission.
+
+**Fixed** (brawlback-asm commit `77da4ad`): added the missing
+`FixGameSettingsEndianness(gameSettings);` call between the `memmove` and
+`MergeGameSettingsIntoGame(gameSettings)` in `CheckIsMatched()`. **Build-verified**
+with a full `make` from the repo root (`python3 ./bbk.py setup && make`) -
+links and outputs `Brawlback-Online.rel` cleanly, only pre-existing unrelated
+warnings.
+
+Concretely, before this fix: `stageID` (a `bu16`) and every player's
+`nametag[]` (`bu16[8]`, used for CSS name-tag display) arrived
+byte-swapped/wrong on every match, since Dolphin (x86, little-endian) builds
+this struct and sends it raw over EXI into the Wii's PowerPC (big-endian)
+address space. `randomSeed` is also fixed by this same call but is currently
+inert either way - `MergeGameSettingsIntoGame` hardcodes a fixed test seed
+rather than reading `settings.randomSeed` (a separate, pre-existing
+simplification, not something this fix touches). This does **not** explain
+issue #73 - `charColor`/`colorFileIndex` are single bytes with no byte order
+to correct - but it's a real, independent, now-fixed bug in the same
+neighborhood, and plausibly meaningful for "unranked actually working": a
+byte-swapped stage ID could easily resolve to an invalid/wrong stage or
+undefined behavior depending on what value it lands on.
+
 ### 2026-07-29: audit pass toward "play unranked end-to-end via the launcher"
 
 Goal reframed by the user: work toward being able to play at least unranked
