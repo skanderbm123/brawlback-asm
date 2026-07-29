@@ -1279,6 +1279,47 @@ assuming they're all bugs like the stage one was - most are not:
   proper stuff based on reality... assume p1 vs p1"), so this is consistent
   with an existing documented limitation, not a new/different bug.
 
+### 2026-07-29: core rollback/savestate audit - one dead class identified (not a bug), rest too risky to touch blind
+
+Went looking for the same class of bug as the endianness/stage fixes
+(clear call-wiring mistakes) in the actual rollback/savestate machinery,
+since that's the last major unaudited piece of "does a match play
+correctly once it starts."
+
+**`BrawlbackSavestate` (Savestate.cpp/.h, Dolphin clone) is entirely dead
+code - confirmed, not a bug.** Grepped the whole codebase: nothing outside
+its own definition file references the class at all - not instantiated,
+`Capture()`/`Load()` never called anywhere. Initially looked alarming (a
+completely unused savestate class would mean rollback isn't wired up), but
+tracing further found the real mechanism: `EXIBrawlback.cpp`'s
+`SaveState()`/`handleLoadSavestate()` call `IncrementalRB::SaveWrittenPages()`/
+`IncrementalRB::Rollback()` (`#include <incremental-rollback/incremental_rb.h>`),
+a separate, page-dirty-tracking incremental savestate system under
+`Core/Brawlback/include/incremental-rollback/`. This lines up exactly with
+this branch's name (`savestate-efficiency`) - `BrawlbackSavestate` is the
+original Slippi-derived full-region-copy approach, superseded by a more
+efficient incremental one, with the old class simply left in the tree
+unused rather than deleted. Worth remembering this if `BrawlbackSavestate`
+ever looks like a lead again - it isn't one.
+
+**`TimeSync.cpp`'s public functions are all genuinely wired up** - checked
+`shouldStallFrame`/`startGame`/`TimeSyncUpdate`/`ReceivedRemoteFramedata`/
+`ProcessFrameAck`/`getMinAckFrame` against `EXIBrawlback.cpp` and every one
+has at least one real call site. No dead-code leads here.
+
+**Deliberately did not dig into `IncrementalRB`'s internals**
+(`incremental_rb.cpp`, `mem.cpp`, `job_system.cpp`, `tiny_arena.cpp`) or the
+actual timing/stall logic inside `TimeSync.cpp`'s functions. This is the
+highest-risk area in either repo to guess at: a custom page-tracking
+allocator and frame-timing algorithm, not simple glue/wiring code like the
+bugs fixed earlier today. A wrong "fix" here could cause silent memory
+corruption or subtle desyncs that are far harder to notice or diagnose than
+a wrong costume or stage - exactly the kind of mistake this session already
+made once with #73 and had to revert. This needs either the original
+author's context or a live two-machine test to safely touch, not static
+reading alone. Flagging clearly rather than leaving it looking
+unexamined.
+
 ### 2026-07-29: third instance of the dead-code-vs-live-code pattern - login flow, deliberately not touched
 
 While tracing the playkey path bug (below), found that `containers/Header/index.tsx`
