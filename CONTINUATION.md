@@ -609,10 +609,20 @@ accounts status to decide whether `MainView` should be restored (once
 those backend pieces are ready) or `Replay`'s stub should just get a
 better "coming soon" message in the meantime.
 
+**Found one more live (not dead-code) instance of the same leftover-Slippi-text
+bug, in `ModsOptions.tsx` (commit `e4ed2e8`).** This tab is actually rendered
+(`SettingsPage.tsx` case 1), so unlike `MainView` above, this one needed fixing,
+not just documenting. The ISO file-picker filter still said `"Melee ISO"` -
+missed by the earlier text sweep (`7968663`) because that commit didn't touch
+this file. Also fixed a real mislabel: the "Add Mod" dialog's SD-card-file
+`<input type="file">` was labeled "Launcher Path", duplicating the label on
+the ELF-file input right above it, which would mislead anyone adding a mod's
+SD card file. Both one-line text fixes, typecheck-clean.
+
 **Everything in this whole launcher section is sitting as local git commits
 in `/workspace/brawlback-launcher` (currently: `2269126`, `f2f6cad`,
-`b0da467`, `7968663`, `962d83e`, `9366078`, in that order on top of the real
-`Brawlback-Team/brawlback-launcher` history) — none of it is pushed
+`b0da467`, `7968663`, `962d83e`, `9366078`, `e4ed2e8`, in that order on top of
+the real `Brawlback-Team/brawlback-launcher` history) — none of it is pushed
 anywhere, because no `skanderbm123` fork of `brawlback-launcher` exists
 yet.** Same situation as `Brawlback-Team/dolphin` above: ask the user to
 fork `Brawlback-Team/brawlback-launcher` too, next time you're in touch,
