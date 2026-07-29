@@ -1451,6 +1451,7 @@ namespace Netplay {
         if (cmd_byte == EXICommand::CMD_SETUP_PLAYERS) {
             NetMenu::message->printf(0, "Found Opponent");
             memmove(&gameSettings, read_data + 1, sizeof(GameSettings));
+            FixGameSettingsEndianness(gameSettings);
             MergeGameSettingsIntoGame(gameSettings);
             matched = true;
         }
