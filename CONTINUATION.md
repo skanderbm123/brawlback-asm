@@ -538,9 +538,44 @@ descriptions/labels in Settings (`AdvancedAppSettings.tsx`,
 Slippi.gg" claim rather than guessing what to replace it with. `npx tsc
 --noEmit` and `yarn lint` both clean throughout.
 
+**UPDATE, 2026-07-29 (continued): a real, visible bug found and fixed**
+(commit `9366078`) — **two of the four Settings tabs rendered a
+completely empty box.** `App.tsx` routes `settings/*` to
+`pages/settings/SettingsPage.tsx`, a 4-tab (General/Mods/Netplay/Replays)
+layout whose `tabSwitch()` only had cases for tabs 0 and 1 - clicking
+"Netplay" or "Replays" showed nothing. Found by comparing against
+`containers/Settings/index.tsx`, which has a *complete*, correctly-wired
+settings config (Game/Replays/Netplay/Playback/Advanced/Help - a superset)
+consumed by `views/SettingsView.tsx` - except **`SettingsView` is never
+imported or rendered anywhere in the app.** It's a fully-correct,
+complete implementation that's 100% dead code, while the broken,
+half-finished `SettingsPage` is what's actually live and routed to.
+
+Completed `SettingsPage` rather than reverting to the dead `SettingsView`:
+`SettingsPage`'s simpler 4-tab structure (one combined "Netplay" tab, no
+separate "Playback" tab like `SettingsView` has) matches Brawlback's
+single-Dolphin-build model (`settings/types.ts` has a comment: "brawlback
+uses single dolphin build for netplay and replays") better than
+`SettingsView`'s older Slippi-style split - so `SettingsPage` reads as the
+intentional, Brawlback-adapted redesign, just abandoned partway through
+rather than the wrong direction entirely. Wired "Netplay" to
+`DolphinSettings(NETPLAY)` and "Replays" to `ReplayOptions`, both
+already-correct, already-existing components that just weren't reachable
+from anywhere. Also fixed two more leftover "Melee"-labeled strings in
+`MeleeOptions.tsx` (file-picker filter, a radio label) inconsistent with
+the rest of that same component, which already correctly says "Brawl ISO
+File" elsewhere. `npx tsc --noEmit` and `yarn lint` both clean.
+
+If a future session has time: `views/SettingsView.tsx` and the unused half
+of `containers/Settings/index.tsx`'s config (the separate "Playback"
+Dolphin-settings entry) are now confirmed genuinely dead code - safe to
+delete once someone's comfortable that `SettingsPage` really is the
+intended direction (this session left them in place rather than deleting
+working, if unreachable, code without being asked to).
+
 **Everything in this whole launcher section is sitting as local git commits
 in `/workspace/brawlback-launcher` (currently: `2269126`, `f2f6cad`,
-`b0da467`, `7968663`, `962d83e`, in that order on top of the real
+`b0da467`, `7968663`, `962d83e`, `9366078`, in that order on top of the real
 `Brawlback-Team/brawlback-launcher` history) — none of it is pushed
 anywhere, because no `skanderbm123` fork of `brawlback-launcher` exists
 yet.** Same situation as `Brawlback-Team/dolphin` above: ask the user to
