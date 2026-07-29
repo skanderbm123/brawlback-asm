@@ -288,27 +288,24 @@ waiting for the ASM side to send the right payload, which is now done
 defaulting to `UNRANKED`/all-zero so nothing changes until something calls
 `NetMenu::SubmitDirectConnectCode()`.
 
-**The Dolphin-side fix, once `skanderbm123/dolphin` exists** (small, exact,
-already verified against the real source — just needs someone to actually
-apply + build it, this session couldn't push there):
-```cpp
-// In handleFindMatch(), replace the #ifdef/#else/#endif block with just the
-// "then" branch, unconditionally:
-Matchmaking::MatchSearchSettings search;
-std::string connectCode;
+**The Dolphin-side fix is now applied** (`/workspace/brawlback-team-dolphin`
+commit `211f5de`, on top of `savestates-efficiency-v2`, local only pending
+`skanderbm123/dolphin`): removed the `#ifdef REMOVE_THIS_WHEN_PAYLOAD_IS_SET`
+/ `#else` / `#endif` and kept only the "then" branch unconditionally, and
+fixed the cast type — the original commented-out line said
+`(SlippiMatchmaking::OnlinePlayMode)payload[0]`, a copy-paste leftover from
+porting Slippi's own code; the type actually in scope is
+`Matchmaking::OnlinePlayMode` (`Netplay/Matchmaking.h:32`), whose enum values
+(`RANKED=0, UNRANKED=1, DIRECT=2, TEAMS=3`) were confirmed to match
+brawlback-asm's `NetMenu::OnlinePlayMode` byte-for-byte. `<algorithm>` was
+already included for `std::find`, so no new includes needed. Not build-tested
+(no toolchain for full Dolphin in this session) but the change is a pure
+type-fix + dead-branch removal against code already proven correct by the
+disabled branch itself.
 
-search.mode = (Matchmaking::OnlinePlayMode)payload[0];
-std::string shiftJisCode;
-shiftJisCode.insert(shiftJisCode.begin(), &payload[1], &payload[1] + 18);
-shiftJisCode.erase(std::find(shiftJisCode.begin(), shiftJisCode.end(), 0x00), shiftJisCode.end());
-connectCode = shiftJisCode;
-```
-(Note: the original commented-out line says
-`(SlippiMatchmaking::OnlinePlayMode)payload[0]` — that's almost certainly a
-copy-paste leftover from porting Slippi's own code; the type actually in
-scope is `Matchmaking::OnlinePlayMode`, defined right there in
-`Matchmaking.h`. Double check this compiles before assuming the cast type -
-this session couldn't build Dolphin to verify.)
+With this, **issue #72's protocol plumbing is fully closed on both ends**:
+ASM sends the real mode+code payload (`brawlback-asm` `3ee5792`), Dolphin now
+parses it instead of forcing `UNRANKED` (`dolphin` `211f5de`).
 
 **What's still genuinely blocked after that fix lands**: nothing calls
 `SubmitDirectConnectCode` with a real player-typed code yet, because reading
@@ -1082,7 +1079,20 @@ Ranked by what's most valuable to tackle next:
    session (grepped for other `playerSettings[1]`/`[0]` mismatches in this
    file - found none beyond the one just fixed), but a closer, non-grep
    read of the surrounding rollback/frame-data code wasn't done.
-6. Lower priority / less netcode-central: #76 (game-end/CSS-return workflow),
+6. **[brawlback-asm #72](https://github.com/Brawlback-Team/brawlback-asm/issues/72)
+   direct-connect payload plumbing - now DONE on both ends.** ASM side sent
+   the real mode+code payload as of commit `3ee5792` (see write-up above);
+   Dolphin side now parses it instead of forcing `UNRANKED` (local commit
+   `211f5de` in `/workspace/brawlback-team-dolphin`, on top of `cbfdc87` -
+   same unpushed-pending-fork situation). Removed the dead
+   `#ifdef REMOVE_THIS_WHEN_PAYLOAD_IS_SET` branch and fixed the
+   `SlippiMatchmaking`→`Matchmaking` cast-type typo. Still genuinely blocked
+   after this: nothing calls `NetMenu::SubmitDirectConnectCode()` with a
+   real player-typed code yet (CSS name-entry offsets still unknown, see
+   above) - so DIRECT mode is wired end-to-end but has no UI entry point
+   yet. UNRANKED (the only mode currently ever requested) is unaffected
+   either way since it doesn't touch the connect-code path.
+7. Lower priority / less netcode-central: #76 (game-end/CSS-return workflow),
    #71 (BrawlHeaders repo org migration), #70 (menu game-object reverse
    engineering).
 
