@@ -238,7 +238,24 @@ r13-relative offsets like `-0x49a7(r13)` that don't transfer to Brawl at
 all). **Needs the `brawl` decomp repo or the Ghidra OpenBrawl-CBM shared
 project (`brawlback-wiki/GHIDRA.md` — needs the actual Ghidra desktop app +
 a Discord invite for credentials, not available in this sandboxed session)**
-before real hook code can be written safely. This is a solid, evidence-backed
+before real hook code can be written safely.
+
+Checked 2026-07-28 (later) whether any *public* resource could substitute for
+those two - it can't, at least not yet: `doldecomp/brawl` (the real,
+public, community decompilation project - not the user's private `brawl`
+repo, a different thing, cloned read-only at `/workspace/doldecomp-brawl`)
+is only ~1% decompiled overall and has no menu/CSS/name-entry code at all
+(`grep`'d both the source tree and the `sora_menu_sel_char` module's
+`symbols.txt` - the latter has `muSelCharPlayerArea`'s already-known methods
+like `setCharPic`, matching BrawlHeaders exactly, but nothing for
+`MuSelctChrNameEntry`). `Sammi-Husky/BrawlModules` (cloned read-only at
+`/workspace/BrawlModules`, the repo issue #70 itself suggests as a
+starting point) only has stage (`st_*`) and one fighter (`ft_marth`)
+reimplementations, no menu work at all - issue #70 is asking for genuinely
+unstarted work, not pointing at something half-done. Don't re-check these
+two in a future session expecting a different answer unless their own
+upstream progress has visibly moved - this is a real, current dead end, not
+a "didn't look hard enough" one. This is a solid, evidence-backed
 diagnosis to hand to whoever has that access next, not a guess.
 
 ### Issue #72 — corrected, and the remaining fix is now exact and tiny
