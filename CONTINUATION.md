@@ -555,6 +555,54 @@ compatibility issue found was the `devEngines` bug above, now fixed).
 Electron GUI in this sandboxed, display-less environment, so this is as far
 as verification went - no runtime testing of the app itself).
 
+### 2026-07-29: a flagged lead in ProcessGameSettings - NOT confirmed, needs care
+
+While looking for more bugs of the same shape as #73 (checked all of
+brawlback-asm's smaller source files - `BrawlbackHeadersImpl.cpp`,
+`EXI_hooks.cpp`, `exi_packet.cpp`, `mem_exp_hooks.cpp`, `rel.cpp`,
+`utils.cpp` - all mechanical boilerplate, all correct, nothing found there),
+traced how the stage gets picked and found something that *might* be a
+second bug in `Brawlback-Team/dolphin`'s `ProcessGameSettings` - but unlike
+#73, **this one isn't confirmed, don't just apply a fix without verifying
+further**.
+
+The mechanism: the non-host branch picks a random stage
+(`matchmaking->GetRandomStage()`) and then, after building its merged
+settings, does `this->netplay->BroadcastGameSettings(this->server,
+&mergedGameSettings)` - re-sending its own *already-merged* settings back
+to the host, using `CMD_GAME_SETTINGS`, **the exact same packet command**
+that `ProcessNetReceive`'s `CMD_GAME_SETTINGS` case routes to
+`ProcessGameSettings` in the first place (confirmed: `ProcessGameSettings`
+has exactly one call site, from that one packet-command case; no
+idempotency guard visible anywhere - no "already processed" flag, no
+early-return). If that's right, the host would run `ProcessGameSettings`
+*twice*: once for the client's original raw settings (getting a
+placeholder/default stage, since the ASM side doesn't pick a stage - this
+looks intentional, to be overwritten later), and again for the client's
+re-broadcast of its own merged settings (this time picking up the real
+stage via `mergedGameSettings.stageID = opponentGameSettings->stageID`,
+which does look like the *intended* way the stage reaches the host).
+
+The part that's *not* clearly fine: on that second pass, the host's `isHost`
+branch would also re-run `mergedGameSettings.playerSettings[1].charID =
+opponentGameSettings->playerSettings[0].charID` (and same for
+charColor/rumble/colorFileIndex) - but on this second call,
+`opponentGameSettings` is the *client's merged settings*, where index `[0]`
+represents what the client believes is the *host's own* data (echoed back),
+not the client's. If that reasoning holds, the host's own P2 slot would get
+overwritten with the host's own P1 data instead of the client's, right
+after correctly receiving it the first time.
+
+**Why this is flagged rather than fixed**: unlike #73, this requires
+reasoning about a two-pass control flow and packet timing, and there could
+easily be a guard, ordering guarantee, or piece of context this session
+missed that makes rerunning this safe in practice - the confidence level
+here is meaningfully lower than #73's direct, one-pass trace. Don't apply a
+fix based on this write-up alone; re-verify the actual call sequence first
+(ideally with logging/a debugger attached to a real two-client test, since
+this is exactly the kind of timing-dependent thing that's hard to be 100%
+sure of from static reading alone).
+
 ## The goal
 
 The user's ultimate goal: a **ranked online mode for Brawl / Project M /
