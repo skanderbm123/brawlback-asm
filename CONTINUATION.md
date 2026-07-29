@@ -1279,6 +1279,42 @@ assuming they're all bugs like the stage one was - most are not:
   proper stuff based on reality... assume p1 vs p1"), so this is consistent
   with an existing documented limitation, not a new/different bug.
 
+### 2026-07-29: no first-run onboarding flow at all - confirmed real, confirmed not safe to just restore
+
+Checked what a brand-new user (no ISO, no Dolphin downloaded) actually sees
+on first launch. `App.tsx`'s routes go straight to `AppBase`/`HomePage`
+unconditionally - the `initialized` flag only gates a loading spinner, not
+any setup/onboarding state. There's a whole, apparently complete QuickStart
+wizard (`containers/QuickStart/`: `IsoSelectionStep`,
+`ImportDolphinSettingsStep`, `ActivateOnlineStep`, `LoginStep`,
+`SetupCompleteStep`, all driven by `useQuickStart.ts`'s step machine) and
+its entry point `views/LandingView.tsx` - but **`LandingView` has zero
+importers anywhere in the app**, same dead-code shape as `MainView`/
+`SettingsView` found earlier today. It is never shown, to anyone, ever.
+
+**This is not a hard blocker** - `pages/base/SettingsPage.tsx` (the live
+Settings, fixed earlier today) has everything a user needs to self-serve:
+ISO picker (`MeleeOptions`/`ModsOptions`), Dolphin install/reinstall
+(`DolphinSettings`, confirmed has real install functionality). A user who
+finds Settings on their own can get fully configured without QuickStart at
+all.
+
+**Checked whether restoring `LandingView` would be a safe, scoped fix like
+the Settings-tabs one earlier - it would not be.** `useQuickStart.ts`'s
+`generateSteps()`/effect both put `QuickStartStep.LOGIN` as the mandatory
+*first* step whenever `!options.hasUser` - which, given the login backend
+is Slippi's unconfigured Firebase (see the login-flow finding above), is
+*always* true. Wiring this wizard back in as-is would trap every new user
+on an unpassable login screen before they ever reach ISO selection - strictly
+worse than the current state, where Settings is directly reachable with no
+gate at all. **Left dead, deliberately, with the reasoning on record**: a
+real fix needs either Lylat's actual backend (so LOGIN can actually
+succeed) or a product decision to make LOGIN skippable/optional ahead of
+ACTIVATE_ONLINE/SET_ISO_PATH - both bigger calls than this session should
+make unilaterally. Whoever picks this up next has the full wizard already
+built (`containers/QuickStart/*`) and just needs one of those two things to
+safely re-route `App.tsx` to it for first-run users.
+
 ### 2026-07-29: #73 - one more theory checked and weakened, static-analysis avenues now exhausted
 
 Took a fresh angle: is there a cross-thread race on the merged costume data?
