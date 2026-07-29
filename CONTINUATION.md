@@ -512,12 +512,16 @@ one, a prettier formatting nit in the line this session added, fixed via
 this session).
 
 **Deliberately left alone in this pass** (real, known gaps, not
-oversights): the broader Console/Nintendont mirroring feature area (bigger
-scope - Wii vs. GameCube homebrew loader is a genuine unresolved design
-question, not just a naming fix), and `newsFeed.ts`'s Medium/GitHub-release
-fetching from `project-slippi` (no confirmed Brawlback news source exists
-to point it at instead - currently just shows irrelevant Slippi news to
-Brawlback users, which is wrong but not something to fabricate a fix for).
+oversights): the broader Console/Nintendont mirroring feature area - bigger
+scope, Wii vs. GameCube homebrew loader is a genuine unresolved design
+question, not just a naming fix.
+
+**UPDATE, 2026-07-29: `newsFeed.ts` fixed too** (commit `962d83e`).
+Repointed the GitHub-release half of the feed at
+`Brawlback-Team/brawlback-launcher` and `project-lylat/dolphin` (both real,
+already-confirmed-live repos - not a guess), and removed the Medium blog
+fetch entirely rather than invent a Brawlback publication slug that isn't
+confirmed to exist. Better to show nothing than fabricate a source.
 
 **UPDATE, 2026-07-29: one more pass, more real UI text bugs found and fixed**
 (commit `7968663`). Swept `renderer/` more broadly for user-visible "Slippi"
@@ -536,7 +540,7 @@ Slippi.gg" claim rather than guessing what to replace it with. `npx tsc
 
 **Everything in this whole launcher section is sitting as local git commits
 in `/workspace/brawlback-launcher` (currently: `2269126`, `f2f6cad`,
-`b0da467`, `7968663`, in that order on top of the real
+`b0da467`, `7968663`, `962d83e`, in that order on top of the real
 `Brawlback-Team/brawlback-launcher` history) — none of it is pushed
 anywhere, because no `skanderbm123` fork of `brawlback-launcher` exists
 yet.** Same situation as `Brawlback-Team/dolphin` above: ask the user to
