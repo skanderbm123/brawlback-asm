@@ -1228,6 +1228,57 @@ Battlefield. Neither one alone would have produced correct stage variety -
 worth remembering that connection if either one is ever reverted in
 isolation.
 
+### 2026-07-29: dead-code sweep for more "forgot to call it" bugs - one more lead ruled out, rest confirmed genuinely dead
+
+After the endianness and stage fixes above both came from the same pattern
+(a function that's clearly purpose-built for one call site but never wired
+in), did a systematic sweep of `Rollback_Hooks.cpp` for every function
+defined but referenced nowhere else in the file. Found: `SendFrameCounterPointerLoc`,
+`ShouldSkipGfTaskProcess`, `StallOneFrame`, `SubmitDirectConnectCode` (already
+known, see #72 above), `SyncLog`, `TriggerFastForwardState`,
+`fixPadInconsistency`, `getFramesToAdvance`. Checked each rather than
+assuming they're all bugs like the stage one was - most are not:
+
+- `getFramesToAdvance`/`TriggerFastForwardState`/`StallOneFrame` are
+  convenience wrappers around the `FrameAdvance::framesToAdvance` global -
+  but that field is read/written **directly** in over a dozen other places
+  in this same file (confirmed via grep), including inline asm blocks. The
+  wrappers are simply superseded/never-adopted alternate API, not a missing
+  call - the actual mechanism works fine without them.
+- `ShouldSkipGfTaskProcess` duplicates logic that's already inlined directly
+  in `gfTaskProcessHook()` (the actual registered hook) - same
+  `strstr(nonResimTasks, taskName)` check, just written twice. Dead/superseded,
+  not missing.
+- `SyncLog` is a debug/logging helper (matches the `printInputs`/
+  `printFrameData`/`printGameInputs` family nearby) - optional dev tooling,
+  fine to leave unused.
+- `fixPadInconsistency` - lower confidence, didn't fully trace whether its
+  `g_gfPadSystem->updateLow()` call is needed outside of a match; not
+  touched.
+- `SendFrameCounterPointerLoc` **initially looked like a real gap** - the
+  Dolphin clone has a live `handleFrameCounterLoc()` handler
+  (`CMD_SEND_FRAMECOUNTERLOC`) that registers the frame counter's address as
+  a savestate `staticRegions` entry, so an uncalled sender looked exactly
+  like the endianness/stage pattern. But tracing further: its sibling
+  senders `CMD_SEND_ALLOCS`/`CMD_SEND_DEALLOCS` (`ProcessGameAllocation`/
+  `ProcessGameFree`) are only invoked from `alloc_gfMemoryPool_hook`/
+  `free_gfMemoryPool_hook` - both of which are **commented out** in
+  `InstallHooks`. So the entire dynamic savestate-memory-region-tracking
+  subsystem (allocs, deallocs, and presumably the frame-counter static
+  region too) is currently, deliberately inactive as a whole - this isn't
+  one forgotten call, it's a disabled subsystem. Did **not** wire this one
+  in on its own; re-enabling just the frame-counter piece without
+  understanding why the alloc/dealloc tracking is disabled risks being
+  wrong in a way that's hard to detect without live savestate testing.
+  Flagging for whoever next investigates savestate/rollback memory
+  handling specifically.
+- Also revisited a "controller port" theory for #73 (was local player's
+  CSS slot always index 0, same as `fillOutGameSettings` assumes?) - ruled
+  out: `localPlayerPort` is already a known, deliberately-hardcoded-to-0
+  simplification on the Dolphin side (documented above, "TODO: assign
+  proper stuff based on reality... assume p1 vs p1"), so this is consistent
+  with an existing documented limitation, not a new/different bug.
+
 ### 2026-07-29: audit pass toward "play unranked end-to-end via the launcher"
 
 Goal reframed by the user: work toward being able to play at least unranked
