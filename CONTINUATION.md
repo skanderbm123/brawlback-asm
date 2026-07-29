@@ -920,6 +920,27 @@ Ranked by what's most valuable to tackle next:
    #75 (pause workflow cleanup), #71 (BrawlHeaders repo org migration), #70
    (menu game-object reverse engineering).
 
+   **#76 investigated 2026-07-28, not implemented** - its own text bundles a
+   crash bug with three separate feature asks (report to Lylat, return to
+   CSS with player info, live-update opponent's screen on character change).
+   Found real, relevant existing code: `Match::PopulateGameReport`'s actual
+   stock/damage-reading logic is entirely commented out, and
+   `Match::SendGameReport`'s call site is permanently disabled behind
+   `#if 0` in `StopGameScMeleeHook` - this is exactly the "report winner to
+   Lylat" part of the issue, already half-written but deliberately turned
+   off (unclear why - maybe the `Fighter`/`ftManager` API calls it uses were
+   never verified safe). Also confirmed `Scene::VsResult` (the results-screen
+   scene ID, `0xc`) is defined but never referenced/hooked anywhere in
+   `Rollback_Hooks.cpp` - there's no netplay-specific handling at all for
+   the transition into or out of the post-match results screen.
+   **Didn't attempt a fix**: the actual crash needs either a real repro/crash
+   log to diagnose precisely, or the same Ghidra/decomp access blocking
+   #1 and #72's text-entry widget, to safely write new scene-transition hook
+   code - guessing at this without either risks a worse or different crash
+   than the one being fixed. The three feature asks beyond the crash are
+   genuinely new subsystems (especially "live-update opponent's screen"),
+   not a quick fix.
+
 ## Working conventions established so far
 
 - Git identity for commits: `skanderbm123` / `skander96@hotmail.com`.
