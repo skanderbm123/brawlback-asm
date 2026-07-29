@@ -519,13 +519,29 @@ fetching from `project-slippi` (no confirmed Brawlback news source exists
 to point it at instead - currently just shows irrelevant Slippi news to
 Brawlback users, which is wrong but not something to fabricate a fix for).
 
+**UPDATE, 2026-07-29: one more pass, more real UI text bugs found and fixed**
+(commit `7968663`). Swept `renderer/` more broadly for user-visible "Slippi"
+strings: `IsoSelectionStep.tsx`'s invalid-ISO error told users to provide an
+"NTSC 1.02" ISO (Melee's version identifier) "for Slippi Online" - this one
+is a genuinely confusing bug, not just under-branding, since `verifyIso.ts`'s
+actual hash-checking logic *is* already correctly Brawl-specific (real,
+named Brawl 1.01 ISO hashes; Melee's own hash is explicitly listed as
+`INVALID`) - the code was already right, only the error message shown to
+users was wrong. Also fixed two native file-picker filters still labeled
+"Slippi Dolphin", `UserInfo.tsx`'s "Slippi server error", and two more
+descriptions/labels in Settings (`AdvancedAppSettings.tsx`,
+`SupportBox.tsx`). Also removed an unverifiable "files streamed from
+Slippi.gg" claim rather than guessing what to replace it with. `npx tsc
+--noEmit` and `yarn lint` both clean throughout.
+
 **Everything in this whole launcher section is sitting as local git commits
 in `/workspace/brawlback-launcher` (currently: `2269126`, `f2f6cad`,
-`b0da467`, in that order on top of the real `Brawlback-Team/brawlback-launcher`
-history) — none of it is pushed anywhere, because no `skanderbm123` fork of
-`brawlback-launcher` exists yet.** Same situation as `Brawlback-Team/dolphin`
-above: ask the user to fork `Brawlback-Team/brawlback-launcher` too, next
-time you're in touch, then push this branch there.
+`b0da467`, `7968663`, in that order on top of the real
+`Brawlback-Team/brawlback-launcher` history) — none of it is pushed
+anywhere, because no `skanderbm123` fork of `brawlback-launcher` exists
+yet.** Same situation as `Brawlback-Team/dolphin` above: ask the user to
+fork `Brawlback-Team/brawlback-launcher` too, next time you're in touch,
+then push this branch there.
 
 **Build/verify setup for next time**: `cd
 /workspace/brawlback-launcher && yarn install` (took ~65s, works cleanly on
