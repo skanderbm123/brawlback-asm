@@ -1279,6 +1279,58 @@ assuming they're all bugs like the stage one was - most are not:
   proper stuff based on reality... assume p1 vs p1"), so this is consistent
   with an existing documented limitation, not a new/different bug.
 
+### 2026-07-29: real launcher bug found - playkey file written to a path Dolphin never reads
+
+While checking whether unranked matchmaking needs a real account, traced
+`CEXIBrawlback::getUserInfo()` (Dolphin clone) and found it reads
+credentials from a `lylat.json` file in Dolphin's own user-data directory
+(`File::GetUserPath(D_USER_IDX) + "lylat.json"`, or
+`File::GetExeDirectory() + "/lylat.json"` on Windows). The launcher's
+`writePlayKeyFile`/`findPlayKey` (`src/dolphin/playkey.ts`) wrote to a
+completely different file: `user.json` inside Slippi's own directory names
+(`~/Library/Application Support/com.project-slippi.dolphin/Slippi` on
+macOS, `~/.config/SlippiOnline` on Linux). **A user could go through the
+entire login flow and it would silently do nothing** - the key file would
+exist, just not where Dolphin ever looks, so `getUserInfo()` would always
+fall through to its "Could not find lylat.json" branch and return empty
+credentials regardless of login state.
+
+Verified the correct paths from source rather than guessing: this Dolphin
+fork hasn't rebranded Dolphin's own user-directory names at all - grepped
+`Common/CommonPaths.h`'s `NORMAL_USER_DIR` and `UICommon::SetUserDirectory()`
+and found they're still literally `"Dolphin Emulator"` (Windows),
+`"Library/Application Support/Dolphin"` (macOS), `"dolphin-emu"` (Linux) -
+no Slippi or Brawlback/Lylat branding at any of these layers. **Fixed**
+(launcher commit `a54ed54`): macOS now points at
+`~/Library/Application Support/Dolphin`, Linux at `~/.dolphin-emu` (the
+legacy/non-XDG default Dolphin uses when that directory already exists;
+Dolphin's XDG fallback to `$XDG_DATA_HOME/dolphin-emu` when it doesn't is
+**not** replicated - flagged as an unverified edge case, would need a real
+Linux install to confirm which path applies). Windows was already
+structurally correct (same directory as the Dolphin executable), just
+needed the filename fix. The `PlayKey` TypeScript type's fields
+(`uid`/`playKey`/`connectCode`) already matched what `getUserInfo()` reads -
+only the file location was wrong. Typecheck-clean.
+
+**Important context this fix surfaced**: the entire login/account backend
+this launcher currently talks to (`slippiBackendService`, Firebase auth
+config via `FIREBASE_API_KEY`/etc. env vars, `SLIPPI_BACKEND_URL` GraphQL
+endpoint) is **unmodified Slippi infrastructure** - it doesn't point at
+Lylat's backend at all, and there's no equivalent Lylat config anywhere in
+this repo. This is a much bigger, out-of-scope gap (needs Lylat's actual
+backend details, which live entirely outside these forked repos) - not
+something this session can fix blind. **However, this does not currently
+block unranked play specifically**: `Matchmaking::startMatchmaking()`
+(Dolphin clone) already has its `if (!m_user->IsLoggedIn()) { ...
+"Must be logged in to queue"... }` check commented out, and the launcher's
+own `launchNetplay()` (`useDolphinActions.ts`) never checks login/playKey
+state before launching - only Dolphin's install status. So matchmaking
+will proceed with empty/anonymous `uid`/`playKey` regardless of login,
+for any mode including unranked. Whether **lylat.gg's server** independently
+rejects anonymous tickets even for unranked is the one remaining unknown
+here, and it's a pure live-test question - can't be determined by reading
+code on either side of this connection.
+
 ### 2026-07-29: audit pass toward "play unranked end-to-end via the launcher"
 
 Goal reframed by the user: work toward being able to play at least unranked
