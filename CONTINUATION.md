@@ -633,53 +633,70 @@ compatibility issue found was the `devEngines` bug above, now fixed).
 Electron GUI in this sandboxed, display-less environment, so this is as far
 as verification went - no runtime testing of the app itself).
 
-### 2026-07-29: a flagged lead in ProcessGameSettings - NOT confirmed, needs care
+### 2026-07-29: the flagged ProcessGameSettings lead, resolved - and it caught a mistake
 
-While looking for more bugs of the same shape as #73 (checked all of
-brawlback-asm's smaller source files - `BrawlbackHeadersImpl.cpp`,
-`EXI_hooks.cpp`, `exi_packet.cpp`, `mem_exp_hooks.cpp`, `rel.cpp`,
-`utils.cpp` - all mechanical boilerplate, all correct, nothing found there),
-traced how the stage gets picked and found something that *might* be a
-second bug in `Brawlback-Team/dolphin`'s `ProcessGameSettings` - but unlike
-#73, **this one isn't confirmed, don't just apply a fix without verifying
-further**.
+Went back to actually verify the lead below instead of leaving it flagged,
+and it turned up something important: **the earlier #73 "fix" (commit
+`cbfdc87`) was wrong and has been reverted** (dolphin commit `8035041`).
+Recording the full corrected trace here since the wrong version was written
+up with high confidence below and in the punch-list - anyone reading old
+context needs the correction, not just the new conclusion.
 
-The mechanism: the non-host branch picks a random stage
-(`matchmaking->GetRandomStage()`) and then, after building its merged
-settings, does `this->netplay->BroadcastGameSettings(this->server,
-&mergedGameSettings)` - re-sending its own *already-merged* settings back
-to the host, using `CMD_GAME_SETTINGS`, **the exact same packet command**
-that `ProcessNetReceive`'s `CMD_GAME_SETTINGS` case routes to
-`ProcessGameSettings` in the first place (confirmed: `ProcessGameSettings`
-has exactly one call site, from that one packet-command case; no
-idempotency guard visible anywhere - no "already processed" flag, no
-early-return). If that's right, the host would run `ProcessGameSettings`
-*twice*: once for the client's original raw settings (getting a
-placeholder/default stage, since the ASM side doesn't pick a stage - this
-looks intentional, to be overwritten later), and again for the client's
-re-broadcast of its own merged settings (this time picking up the real
-stage via `mergedGameSettings.stageID = opponentGameSettings->stageID`,
-which does look like the *intended* way the stage reaches the host).
+First, the double-invocation question this section originally raised is
+**settled: there is no double invocation**. `ProcessGameSettings` has
+exactly one call site (`ProcessNetReceive`'s `CMD_GAME_SETTINGS` case), and
+tracing the actual packet flow shows each side receives exactly one
+`CMD_GAME_SETTINGS` packet for the whole match: host broadcasts its raw
+settings once right after connecting (`NetplayThreadFunc`, right after the
+connect handshake); client receives that, merges, and broadcasts its own
+merged result back *once* (end of the `!isHost` branch); host receives
+*that* once. Two packets total, one `ProcessGameSettings` call per side -
+never two calls on the same side.
 
-The part that's *not* clearly fine: on that second pass, the host's `isHost`
-branch would also re-run `mergedGameSettings.playerSettings[1].charID =
-opponentGameSettings->playerSettings[0].charID` (and same for
-charColor/rumble/colorFileIndex) - but on this second call,
-`opponentGameSettings` is the *client's merged settings*, where index `[0]`
-represents what the client believes is the *host's own* data (echoed back),
-not the client's. If that reasoning holds, the host's own P2 slot would get
-overwritten with the host's own P1 data instead of the client's, right
-after correctly receiving it the first time.
+But tracing that flow all the way through is exactly what exposes the real
+bug. `BroadcastGameSettings` (confirmed in `Netplay.cpp`) serializes
+whatever `GameSettings*` it's given verbatim - no rearranging. So:
 
-**Why this is flagged rather than fixed**: unlike #73, this requires
-reasoning about a two-pass control flow and packet timing, and there could
-easily be a guard, ordering guarantee, or piece of context this session
-missed that makes rerunning this safe in practice - the confidence level
-here is meaningfully lower than #73's direct, one-pass trace. Don't apply a
-fix based on this write-up alone; re-verify the actual call sequence first
-(ideally with logging/a debugger attached to a real two-client test, since
-this is exactly the kind of timing-dependent thing that's hard to be 100%
-sure of from static reading alone).
+- **What the host broadcasts** (`&this->gameSettings`, raw, straight from
+  `handleStartMatch`'s memcpy of the ASM side's `CMD_START_MATCH` payload)
+  really does have the host's own data at `playerSettings[0]` and nothing
+  meaningful at `[1]` - this is the fact `fillOutGameSettings` guarantees
+  (it only ever writes index `[0]`, regardless of host/client role).
+  **This is the packet the client receives**, and the client's `!isHost`
+  branch correctly reads the host's data from `opponentGameSettings->playerSettings[0]`.
+- **What the client broadcasts back** is *not* that same kind of raw
+  packet - it's `&mergedGameSettings`, the result of the client's own merge,
+  taken at the end of the `!isHost` branch after it has already: copied its
+  own raw data (originally at its own `[0]`) into `[1]` (client occupies the
+  P2/`localPlayerIdx=1` slot), then overwritten `[0]` with the host's data
+  it just received. **This is the packet the host receives** as
+  `opponentGameSettings` in its own (host, `isHost` branch) call - and by
+  this point index `[0]` holds the *host's own data echoed back*, while
+  index `[1]` holds the *client's real choice*.
+
+`cbfdc87` changed the host's read from `opponentGameSettings->playerSettings[1]`
+(client's real data - correct) to `[0]` (host's own echoed data - wrong),
+reasoning from the `fillOutGameSettings`-always-writes-`[0]` fact - which is
+true, but doesn't apply here because the host isn't reading the client's
+raw `CMD_START_MATCH` payload, it's reading the client's *own merge output*,
+which has already moved that data to `[1]`. That fix would have made both
+players load in with the host's costume instead of syncing the client's
+real choice - the opposite of the intended fix, and worse than the
+original bug in some ways (P1 was already fine; this would have broken P1's
+display too on the host's own screen, not just P2's).
+
+**Net result: reverted to the original `playerSettings[1]` read (dolphin
+commit `8035041`), and issue #73 goes back to unresolved.** The original
+bug report ("costumes not syncing... P2 loading in as the first secret
+costume") still needs a real root cause - it is not this index, since the
+index was already correct. Worth checking next: whether `this->gameSettings`
+on the host is actually still holding the *host's own* raw data by the time
+the client's rebroadcast arrives (i.e. no unexpected overwrite in between
+those two network events), and whether the ASM-side `MergeGameSettingsIntoGame`
+consumption of `playerSettings[0]`/`[1]` as P1/P2 lines up with whatever
+`localPlayerIdx`-based costume/CSP rendering code does elsewhere - that
+combination wasn't checked this pass. Needs a live two-client test or
+Ghidra-level ASM tracing to actually pin down, same as #1/#75/#76.
 
 ## The goal
 
@@ -1050,40 +1067,28 @@ Ranked by what's most valuable to tackle next:
    claiming it's ready to write blind.)
 5. **[brawlback-asm #73](https://github.com/Brawlback-Team/brawlback-asm/issues/73)
    "costumes not syncing... P2 loading in as the first secret costume"** -
-   **DONE, real root cause found, fix written - but it lives in
-   `Brawlback-Team/dolphin`, not this repo, and isn't pushed anywhere yet**
-   (local commit `cbfdc87` in `/workspace/brawlback-team-dolphin`, branch
-   `savestates-efficiency-v2` - same "no fork yet" situation as the rest of
-   the Dolphin-side work above). `EXIBrawlback.cpp`'s
-   `ProcessGameSettings()`, host branch, merged the opponent's own
-   character/costume choice by reading
-   `opponentGameSettings->playerSettings[1]` - but confirmed by reading
-   `fillOutGameSettings` in this repo's `Rollback_Hooks.cpp` directly that
-   the client's ASM code *always* sends its own local choice at
-   `playerSettings[0]`, never `[1]`, regardless of which slot it ends up
-   playing as. The function's own `!isHost` branch, right above, already
-   gets this right (reads the host's data from `...[0]`) - the `isHost`
-   branch had the index inverted, most likely a copy/paste-and-flip
-   mistake when mirroring the other branch. Fixed to read `[0]` in both
-   branches. Not build-verified (building all of Dolphin is out of scope
-   for a sandboxed session), but it's a minimal, mechanical one-line-per-field
-   index fix with the exact same shape as the adjacent, already-correct
-   code - high confidence without a full build.
-
-   Worth a general note for whoever next works in this file: this is the
-   *second* host-vs-client player-index mixup found in this same function
-   this project (see `localPlayerPort` in the 2026-07-28 section on issue
-   #1 above) - worth a careful read-through of the rest of
-   `ProcessGameSettings` and the input-exchange/save-state code for a
-   possible third instance of the same class of bug. Checked once this
-   session (grepped for other `playerSettings[1]`/`[0]` mismatches in this
-   file - found none beyond the one just fixed), but a closer, non-grep
-   read of the surrounding rollback/frame-data code wasn't done.
+   **STILL UNRESOLVED. An earlier fix attempt in this session (commit
+   `cbfdc87`, changing the host's read from `playerSettings[1]` to `[0]`)
+   was wrong and has been reverted (`8035041`) - see the 2026-07-29
+   "ProcessGameSettings lead, resolved" section above for the full corrected
+   trace.** Short version: the host doesn't receive the client's raw
+   `CMD_START_MATCH` payload (where `[0]` really is always the client's own
+   data) - it receives the client's own already-merged rebroadcast, where by
+   that point `[1]` is the client's real data and `[0]` is the host's own
+   data echoed back. So `[1]` was correct the whole time; the "fix" would
+   have made both players show the host's costume. Reverted, no net change
+   from the pre-session baseline other than removing the bad attempt. The
+   original bug report's real root cause is still open - worth checking
+   next whether `this->gameSettings` on the host stays intact between its
+   own broadcast and the client's reply, and whether the ASM-side
+   `MergeGameSettingsIntoGame`/CSP-rendering code's P1/P2 assumptions line up
+   with this struct's layout. Needs a live two-client test or Ghidra-level
+   tracing, same as #1/#75/#76.
 6. **[brawlback-asm #72](https://github.com/Brawlback-Team/brawlback-asm/issues/72)
    direct-connect payload plumbing - now DONE on both ends.** ASM side sent
    the real mode+code payload as of commit `3ee5792` (see write-up above);
    Dolphin side now parses it instead of forcing `UNRANKED` (local commit
-   `211f5de` in `/workspace/brawlback-team-dolphin`, on top of `cbfdc87` -
+   `211f5de` in `/workspace/brawlback-team-dolphin`, on top of `8035041` -
    same unpushed-pending-fork situation). Removed the dead
    `#ifdef REMOVE_THIS_WHEN_PAYLOAD_IS_SET` branch and fixed the
    `SlippiMatchmaking`→`Matchmaking` cast-type typo. Still genuinely blocked
