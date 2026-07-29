@@ -1279,6 +1279,36 @@ assuming they're all bugs like the stage one was - most are not:
   proper stuff based on reality... assume p1 vs p1"), so this is consistent
   with an existing documented limitation, not a new/different bug.
 
+### 2026-07-29: third instance of the dead-code-vs-live-code pattern - login flow, deliberately not touched
+
+While tracing the playkey path bug (below), found that `containers/Header/index.tsx`
+has a complete, working-looking login flow (`ActivateOnlineDialog`/
+`ActivateOnlineForm`, wired to the real `usePlayKey`/Firebase pipeline) - but
+grepping for its importers shows it's **only ever imported by `MainView.tsx`**,
+already confirmed dead code earlier this session (never rendered by the live
+app). The actual live header, `pages/base/UserHeader.tsx`, has a "Log in"
+button that's a `console.log("login")` no-op - same shape as the Settings-tabs
+find and the MainView/Replay find, a third instance of this pattern in one
+launcher.
+
+**Deliberately not wired in, same reasoning as the Replay/Spectate case**:
+the backend this login flow talks to (`slippiBackendService`'s Firebase
+config + `SLIPPI_GRAPHQL_ENDPOINT`) is Slippi's real infrastructure, not
+Lylat's - there's no Lylat-equivalent config anywhere in this repo, and
+that's third-party information this session has no access to. Checked
+whether wiring it in anyway could be actively harmful (e.g. silently
+submitting real login attempts to Slippi's actual production servers) -
+it can't be: `.env.example` only has placeholder `"example"` values, no
+real `.env` exists in this checkout, so `SLIPPI_GRAPHQL_ENDPOINT`/Firebase
+config would be `undefined` at runtime and the flow would simply fail/throw
+rather than hit anything real. Still not fixed, though, since a
+wired-in-but-broken login dialog is worse than the current honest
+no-op stub - same judgment call as Replay/Spectate/Console above. Whoever
+gets Lylat's real backend details (its own API, or its own Firebase
+project) can wire `containers/Header/index.tsx`'s `ActivateOnlineDialog`
+into `pages/base/UserHeader.tsx`'s login button directly - the UI is
+already built, it just needs a real backend to point at.
+
 ### 2026-07-29: real launcher bug found - playkey file written to a path Dolphin never reads
 
 While checking whether unranked matchmaking needs a real account, traced
