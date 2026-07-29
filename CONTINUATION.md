@@ -954,8 +954,39 @@ Ranked by what's most valuable to tackle next:
    file - found none beyond the one just fixed), but a closer, non-grep
    read of the surrounding rollback/frame-data code wasn't done.
 6. Lower priority / less netcode-central: #76 (game-end/CSS-return workflow),
-   #75 (pause workflow cleanup), #71 (BrawlHeaders repo org migration), #70
-   (menu game-object reverse engineering).
+   #71 (BrawlHeaders repo org migration), #70 (menu game-object reverse
+   engineering).
+
+   **#75 ("Pause Workflow... barebones setup") investigated 2026-07-29, not
+   implemented - but now root-caused precisely, not just vague.**
+   `PlayerFrameData` has two pad fields, `pad` and `sysPad`, clearly meant
+   for different purposes (gameplay input vs. some separate "system" input
+   path, presumably for things like pause that shouldn't be subject to
+   rollback resimulation the way gameplay input is). `getGamePadStatusInjection(status,
+   port, isGamePad)` has an `isGamePad` parameter that selects between
+   `frameData.pad` and `frameData.sysPad` when injecting received input back
+   into the game - **but it's called from exactly one place
+   (`ProcessGameSimulationFrame`), always with `isGamePad=true`.** The
+   `sysPad`/"system" injection path is 100% dead code - scaffolded (the
+   field exists, the parameter exists, the selection logic exists) but never
+   wired up to run. Compounding this: `PopulatePlayerFrameData` currently
+   populates `sysPad` as an exact duplicate of `pad` (`Util::GamePadToBrawlbackPad(FrameLogic::inputBuffer)`
+   for both), so even if something did call the `isGamePad=false` path today,
+   it would behave identically to the game path anyway. There's also a
+   commented-out `if(ddst->newPressedButtons == 0x1000){ bp(); }` nearby (a
+   breakpoint on what looks like a Start-button bitmask check) suggesting
+   the original author was actively debugging this exact thing and left it
+   mid-attempt.
+
+   This matches "barebones setup" precisely: the scaffolding for a separate,
+   rollback-safe pause/system input channel exists, but was never finished
+   or connected to anything. **Not implemented because completing it means
+   knowing where in Brawl's own code the pause menu actually polls input**
+   (to add the missing call site and figure out what `sysPad` should
+   actually contain to be meaningfully different from `pad`) - same
+   Ghidra/decomp-access blocker as #1/#70/#72's remaining piece, not
+   something to guess at in input-injection code where a wrong guess could
+   break gameplay input generally, not just pause.
 
    **#76 investigated 2026-07-28, not implemented** - its own text bundles a
    crash bug with three separate feature asks (report to Lylat, return to
