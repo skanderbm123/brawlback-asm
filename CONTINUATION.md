@@ -1153,6 +1153,75 @@ Ranked by what's most valuable to tackle next:
    genuinely new subsystems (especially "live-update opponent's screen"),
    not a quick fix.
 
+### 2026-07-29: audit pass toward "play unranked end-to-end via the launcher"
+
+Goal reframed by the user: work toward being able to play at least unranked
+through the launcher, jumping between blocked/unblocked areas freely, no
+further check-ins needed until real PC/fork access. Spent this pass
+auditing the actual launcher→Dolphin→matchmaking chain for anything that
+would block unranked specifically, rather than more speculative Dolphin-side
+edits (see the #73 mistake above - static C++ reasoning about multi-hop
+network flows without build/live-test is exactly where this session already
+went wrong once; being more conservative about it now).
+
+**Checked, all clean, no bugs found:**
+- Launcher's live Play button (`pages/base/PlayButton.tsx`, confirmed live
+  via `AppBase.tsx`/`App.tsx` routing - there's a second, dead
+  `components/play_button/PlayButton.tsx` used only by the unreferenced
+  `MainView`, don't confuse the two) → `useDolphinActions.launchNetplay` →
+  `dolphinService.launchNetplayDolphin()` → `DolphinManager.launchNetplayDolphin()`
+  (`manager.ts`) → `DolphinInstance.start()` (`instance.ts`). No auth
+  gating anywhere in this path (`AppBase`/`HomePage`/`UserHeader` don't wrap
+  Play in any login requirement - login button is a `console.log` stub, but
+  that's fine since Brawlback's account system, wherever it lives, isn't a
+  launcher-side concern for unranked). CLI args passed to Dolphin are just
+  `-b -e <isoPath>`, nothing Slippi-connect-code-specific left over - correct
+  for Brawlback's architecture, since matchmaking happens in-game via EXI
+  (`CMD_FIND_OPPONENT`), not launcher command-line args.
+- `Matchmaking::getMMHostForSearchMode()` in the Dolphin clone - initially
+  looked suspicious (always calls `getMexMMHost()`, which for non-dev builds
+  returns `SConfig::GetInstance().m_slippiCustomMMServerURL`, a
+  Slippi-inherited "user-configurable" field, instead of the hardcoded
+  `MM_HOST_PROD`/`MM_HOST_DEV` constants - both dead code, never read).
+  Traced further: `m_slippiCustomMMServerURL` is **only ever referenced in
+  two places** (its `ConfigManager.h` declaration and this one usage site) -
+  grepped all of `Core/Config/*.cpp` and found it's never loaded from any
+  `.ini` file or exposed in any UI, so nothing can ever actually change it
+  at runtime. Its compiled-in default is `"lylat.gg"` (`ConfigManager.h:63`).
+  **Net effect: always connects to lylat.gg in practice, same as the
+  constants would give you** - unwired groundwork (like several `m_slippi*`
+  fields near it), not a live bug. Left alone; wiring it up for real would
+  be scope creep with no evidence it's needed.
+- The Dolphin auto-download/update pipeline (`fetchLatestVersion.ts`,
+  launcher commit `f2f6cad`) was already fixed and **live-verified against
+  the real network** earlier this session - resolves real Lylat Dolphin
+  releases correctly.
+
+**Current overall status for "unranked through the launcher"**, as best
+this session can determine without an actual two-machine live test:
+1. Launcher can download/launch the right Dolphin build with the right ISO. ✅ (verified as far as static analysis + live version-resolution check allows)
+2. In-game menu → `CMD_FIND_OPPONENT` → Dolphin matchmaking against lylat.gg
+   for `UNRANKED` mode specifically. ✅ protocol-correct after this session's
+   #72 fix (mode byte parsed correctly; UNRANKED doesn't even touch the
+   connect-code path, so it was arguably already fine before #72's fix too -
+   #72 only really mattered for DIRECT/TEAMS modes).
+3. Game settings merge/sync after a match is found. ⚠️ **#73 still open** -
+   costume sync has a real, not-yet-diagnosed bug (see correction above).
+   Doesn't block a match from starting, just costume display correctness.
+4. Actual rollback gameplay once in-match: **not audited this pass** - out
+   of scope for a launcher-focused pass, and this is the part most in need
+   of a real two-client live test rather than more static reading.
+5. Nothing found in the launcher itself that would prevent reaching a Play
+   click and having Dolphin launch correctly.
+
+**Bottom line**: nothing new is blocking unranked play from the launcher's
+side specifically. The remaining known blockers are all pre-existing and
+already documented above: #73 (costume sync, unresolved), the general "has
+anyone actually live-tested a real rollback match on this branch" question
+(needs two machines/the user's real PC), and everything is still sitting as
+unpushed local commits pending the `skanderbm123` forks of `dolphin` and
+`brawlback-launcher`.
+
 ## Working conventions established so far
 
 - Git identity for commits: `skanderbm123` / `skander96@hotmail.com`.
