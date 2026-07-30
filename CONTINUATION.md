@@ -1315,6 +1315,88 @@ make unilaterally. Whoever picks this up next has the full wizard already
 built (`containers/QuickStart/*`) and just needs one of those two things to
 safely re-route `App.tsx` to it for first-run users.
 
+### 2026-07-29: actually dug into IncrementalRB's internals - two real fixes applied, one serious lead flagged
+
+Pushed past the earlier "too risky to touch" caution and actually read
+`incremental_rb.cpp`/`mem.cpp`/`tiny_arena.cpp` line by line, since this is
+the literal core of whether rollback plays correctly - avoiding it
+entirely wasn't good enough. Found three things, fixed two, and got a
+solid trace on a third that's too significant to guess-fix blind.
+
+**Fixed #1 (dolphin commit `a2ee4c4`): `IncrementalRB::Shutdown()` was
+never called anywhere.** It exists specifically to free each savestate's
+`_mm_malloc`'d arena backing buffer and tear down the job system, and its
+sibling `IncrementalRB::InitState()` (called from `MemoryManager::Init()`)
+unconditionally allocates fresh buffers every time without freeing any
+previous ones. Added the call to `MemoryManager::Shutdown()`, the natural
+pairing point right where `Init()` set things up. Verified safe even if
+ever called without a prior Init (`arena.backing_mem` default-initializes
+to `nullptr`, `_mm_free(nullptr)` is a no-op; `jobsystem::ShutDown()` just
+joins an empty thread vector if `Initialize()` never ran).
+
+**Fixed #2 (dolphin commit `2f440c4`): off-by-one page overrun in
+`GetWrittenPages`.** `Common::GetPageAddress()` rounds down; the scan's
+`end_pte` was computed from `base + baseSize` directly. When `baseSize` is
+an exact multiple of the page size - the normal case here, since this now
+tracks whole physical memory regions via `GetPhysicalRegions()`, which are
+page-aligned in both start and size - an already-aligned address is
+returned unchanged, landing one page past the buffer's actual last valid
+page. The inclusive `base_pte <= end_pte` loop then ran
+`IsPageDirty`/`HandleChangeProtection`/`SetPageDirtyBit` on a page outside
+the tracked buffer - whatever memory happens to sit immediately after it.
+Fixed by computing `end_pte` from the buffer's last valid byte
+(`base + baseSize - 1`) instead, which resolves correctly whether or not
+`baseSize` is page-aligned.
+
+**Flagged, not fixed - and this one matters**: traced how `OnPagesWritten()`
+interacts with `EvictSavestate()`/`arena_alloc()` across repeated
+resimulation of the *same* savestate slot, and found a real leak with a
+plausible path to an actual crash. `SaveWrittenPages(frame, resim)` only
+calls `EvictSavestate()` (which clears `afterCopies` and resets the
+arena's bump offset) when `savestate.valid && !resim` - eviction is
+skipped whenever `resim` is true. But `OnPagesWritten()`'s alloc loop does
+`savestate.afterCopies.push_back(arena_alloc(...))` unconditionally, once
+per entry in `savestate.changedPages`, on *every* call - it never accounts
+for `afterCopies` already holding entries from a previous call on the same
+Savestate object. Traced the indexing carefully: `RollbackSavestate()`
+only ever reads `afterCopies[index]` for `index` derived from a position
+within the *current* `changedPages` (so the specific data actually
+restored during a rollback isn't corrupted by this, as far as I can trace)
+- but each repeated resim-without-eviction call still burns fresh
+`arena_alloc` calls for entries that get appended and then orphaned,
+permanently advancing the arena's bump-pointer offset for space that's
+never reclaimed until the next successful non-resim eviction. `arena_alloc`
+returns `nullptr` on exhaustion, and neither `OnPagesWritten` nor
+`RollbackSavestate` ever null-checks before `memcpy`-ing through it.
+
+Confirmed the scale is plausible, not just theoretical: `MAX_SAVESTATES =
+MAX_ROLLBACK_FRAMES + 2 = 7` (`brawlback-common/BrawlbackConstants.h`),
+each with a `MAX_NUM_CHANGED_PAGES * PageSize()` ≈ 60000 × 4KB ≈ 234MB
+arena. That's generous headroom for any *one* capture, but if the same
+savestate slot gets resimulated repeatedly across multiple rollback events
+before a normal (non-resim) capture ever evicts it again - plausible over
+a long match with a connection that triggers frequent rollbacks - the
+orphaned allocations could accumulate enough to actually exhaust that
+budget, at which point the next `arena_alloc` returns `nullptr` and the
+next `memcpy` through it crashes. This lines up well with "the game
+crashes" style reports (#76) being intermittent and correlated with
+match length/connection quality rather than reproducible on demand.
+
+**Why this is flagged, not fixed**: I don't have confident insight into
+*why* eviction is deliberately skipped during resim in the first place -
+there could be a real reason (e.g. wanting the pre-resim baseline to
+remain available for something else within the same pass) that a blind
+"just evict every time" fix would break, and this is the single most
+central piece of code to how rollback state gets captured and restored at
+all. Getting this wrong risks a far worse and more confusing failure mode
+than any UI bug this session touched, and unlike the two fixes above, I
+don't have a version I'm confident is a strict improvement without
+understanding the original resim-eviction intent - that needs either the
+original author's context or a live rollback-heavy session to observe
+`afterCopies`/arena growth directly. Recording the full trace here so
+whoever has that context (or a debugger attached to a real match) doesn't
+have to re-derive it.
+
 ### 2026-07-29: #73 - one more theory checked and weakened, static-analysis avenues now exhausted
 
 Took a fresh angle: is there a cross-thread race on the merged costume data?
