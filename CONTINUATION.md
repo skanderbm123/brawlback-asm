@@ -1326,6 +1326,30 @@ make unilaterally. Whoever picks this up next has the full wizard already
 built (`containers/QuickStart/*`) and just needs one of those two things to
 safely re-route `App.tsx` to it for first-run users.
 
+### 2026-07-29: checked addElfPath/addGamePath for an INI key collision - none found, minor fragility noted
+
+Followed `setMod`'s ini-writing (`addElfPath`/`addSdCardPath` in
+`dolphin/config/config.ts`, never read before this session) to make sure
+selecting a mod doesn't clobber the real Brawl ISO's config -
+`addElfPath` writing to `ISOPaths`/`ISOPath1` looked alarming at first
+(those read like Dolphin's own ISO-library-folder-scanning keys, nothing
+to do with ELF/mod injection). Checked `addGamePath` (used for the real
+ISO) alongside it: it uses `ISOPath0`, `addElfPath` uses `ISOPath1` -
+different indices, so they don't directly overwrite each other's value.
+Dolphin's `ISOPaths`/`ISOPathN` mechanism is its standard multi-folder
+game-library scan list; this fork apparently also uses `ISOPath1` for the
+mod's ELF folder specifically (plausible given this is a custom fork, not
+verified further).
+
+**Minor fragility, not a confirmed bug**: `addElfPath` hardcodes
+`ISOPaths = "2"` unconditionally, while `addGamePath` more carefully
+preserves any existing count (`numPaths !== "0" ? numPaths : "1"`). This
+only produces the correct total if `addGamePath` always runs before
+`addElfPath` in practice - true in the normal flow (ISO gets configured
+during initial Dolphin setup, mods get selected afterward via the
+Settings/Mods tab), so not fixed, just noted as slightly less defensive
+than its sibling.
+
 ### 2026-07-29: real launcher bug fixed - deleting a mod dropped every mod after it from the UI
 
 While checking the mod-management backend (prompted by the Project+
