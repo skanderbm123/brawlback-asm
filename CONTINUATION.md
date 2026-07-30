@@ -1315,6 +1315,28 @@ make unilaterally. Whoever picks this up next has the full wizard already
 built (`containers/QuickStart/*`) and just needs one of those two things to
 safely re-route `App.tsx` to it for first-run users.
 
+### 2026-07-29: checked whether BrawlHeaders alone could crack #73 - it can't, confirms existing blocker
+
+Tried one more angle before calling #73 fully blocked: `BrawlHeaders` is a
+real, usable project (not a guess), so maybe the actual costume-file
+loading structures were declared there without needing Ghidra. Checked
+`gm_sel_char_data.h` (confirms `gmSelCharData::m_playersInitData` is the
+same `gmPlayerInitData` struct/layout used by `g_globalMelee`, so no
+struct-mismatch between the CSS-selection-time data and match-init-time
+data - consistent with what was already ruled out), `it_gen_archive.h`
+(turned out to be item/pickup generation - Assist Trophies, Pokeballs,
+crates - "it" is "item," not costume-related at all, a wrong guess), and
+`mu_selchar_player_area.h` (has an `m_charColorNo` field, but that's a
+CSS-portrait-rendering-time struct, not the match-init consumer).
+
+**This doesn't get further than the existing blocker, and confirms why**:
+`BrawlHeaders` only declares *where data lives in memory* (struct
+layouts) - it says nothing about what the game's actual compiled code
+*does* with `m_colorNo`/`m_colorFileNo` once FillInMeleeObj writes them.
+That logic only exists in the game's binary. #73 stays exactly where it
+was - genuinely needs Ghidra/decomp access or a live repro, not more
+header-reading.
+
 ### 2026-07-29: Dolphin's Brawlback settings pane - two of three setting groups are non-functional
 
 Checked `DolphinQt/Settings/BrawlbackPane.cpp` (never examined before this
