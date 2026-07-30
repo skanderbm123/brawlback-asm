@@ -1315,6 +1315,45 @@ make unilaterally. Whoever picks this up next has the full wizard already
 built (`containers/QuickStart/*`) and just needs one of those two things to
 safely re-route `App.tsx` to it for first-run users.
 
+### 2026-07-29: re-audited the small brawlback-asm files - nothing new, a few notes worth recording
+
+Went back through the six smaller source files (`mem_exp_hooks.cpp`,
+`EXI_hooks.cpp`, `exi_packet.cpp`, `rel.cpp`, `utils.cpp`,
+`BrawlbackHeadersImpl.cpp`) with the same careful, line-by-line approach
+that found the endianness/stage/IncrementalRB bugs, rather than trusting
+an earlier session's "checked once, all boilerplate" note at face value.
+Nothing at that severity turned up, but three things worth recording:
+
+- **`BrawlbackHeadersImpl.cpp` is entirely dead code, confirmed.** The
+  whole file is gated behind `#if __cplusplus == 199711L` (C++98 only) -
+  the real, actively-compiled implementations are the `#else` branches
+  with default member initializers, right in the shared headers
+  (`GameSettings.h`/`PlayerSettings.h`/etc.) themselves. Confirmed the
+  toolchain doesn't compile in C++98 mode: no `-std=` flag anywhere in
+  `Brawlback-Online/Makefile`, so clang uses its modern default. This file
+  compiles to an empty translation unit - worth knowing so no one mistakes
+  it for live code later.
+- **`EXIHooks::readEXI` calls `DCFlushRange` (not `DCInvalidateRange`) on
+  the DMA destination buffer after every EXI read** - initially looked
+  like a cache-coherency bug (using the wrong direction of cache op could
+  mean reading stale cached data instead of freshly-DMA'd bytes, which
+  would explain all sorts of "random" data corruption). **Did not confirm
+  this as a real bug** - real Wii SDK `DCFlushRange` typically implements
+  via `dcbf` (flush *then* invalidate), and since DMA writes bypass the
+  CPU cache entirely, any stale cached line here would be clean (not
+  dirty), so the writeback step is a no-op and the invalidate step alone
+  would still correctly evict it - meaning `DCFlushRange` likely achieves
+  the same practical effect as `DCInvalidateRange` would here. Can't verify
+  the exact instruction-level behavior without disassembly access, so
+  this is recorded as **checked, likely fine, not touched** rather than
+  either fixed or confidently flagged as broken - didn't want to repeat
+  the #73 overconfidence mistake in the other direction (crying wolf on
+  something that's probably fine).
+- Minor, not worth fixing: `EXIPacket`'s no-arg and 1-arg constructors log
+  `this->size` (uninitialized at that point in construction) instead of
+  `new_size` in their allocation-failure `OSReport` call - only affects a
+  debug log message in a rare OOM path, not actual behavior.
+
 ### 2026-07-29: actually dug into IncrementalRB's internals - three real fixes applied
 
 Pushed past the earlier "too risky to touch" caution and actually read
