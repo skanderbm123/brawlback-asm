@@ -1315,6 +1315,45 @@ make unilaterally. Whoever picks this up next has the full wizard already
 built (`containers/QuickStart/*`) and just needs one of those two things to
 safely re-route `App.tsx` to it for first-run users.
 
+### 2026-07-29: rollback resimulation orchestration - traced end to end, one suspected bug ruled out, one narrow edge case noted
+
+Traced `handleFrameDataRequest` → `getRemoteInputs` → `getLocalInputs` /
+`updateSync` (the actual per-frame "what inputs does the game get this
+frame" orchestration) and `ProcessRemoteFrameData` →
+`ProcessIndividualRemoteFrameData` (the receive-side queueing) end to end
+- this is as deep into the live resimulation trigger path as this session
+got.
+
+- **Initially suspected dead code**: `handleFrameDataRequest`'s per-player
+  loop has `if (this->framesToAdvance != 0) { for (...) { if
+  (this->framesToAdvance == 0) { ...use blank data... } ... } }` - the
+  inner check looked unreachable given the outer guard already ensures
+  `!= 0`, and nothing in between appeared to change it. **Checked
+  `getRemoteInputs` before flagging this and found it's not dead**: in
+  delay-based (non-rollback) mode, when no remote frame data is found,
+  `getRemoteInputs` sets `this->framesToAdvance = 0` as a side effect
+  (line ~437) - meaning an *earlier* player's iteration in the same loop
+  can legitimately flip this flag, and the inner check correctly catches
+  it for *later* players in that same call. Real, working mechanism, not
+  dead code - glad I traced the side effect before reporting this as a
+  bug.
+- **Confirmed the rollback-vs-delay split is intentional and correct**:
+  in delay-based mode, missing remote data stalls (`framesToAdvance = 0`);
+  in rollback mode, missing remote data predicts instead (reuses the last
+  confirmed input, sets `isPredicting = true`) rather than stalling - this
+  is exactly the expected difference between the two netcode strategies,
+  not a bug.
+- **One narrow, low-confidence edge case, not treated as confirmed**: in
+  rollback mode, if there's *no* current remote data *and* no previous
+  input to predict from either (`getRemoteInputs`'s innermost fallback,
+  line ~410-414), it silently uses blank input and only logs an
+  `ERROR_LOG_FMT` - it does not stall. This should only be reachable very
+  early in a match, before any remote frame has ever been received at all
+  - narrow enough, and dependent enough on match-start sequencing this
+  session hasn't fully traced, that I'm not confident enough to call it a
+  bug outright. Noting it in case whoever eventually does a live two-client
+  test sees a first-frame glitch that lines up with this.
+
 ### 2026-07-29: Netplay.cpp / frame-broadcast / ack logic - checked thoroughly, all clean
 
 Read `Netplay.cpp` (Dolphin clone) fully for the first time, and traced
