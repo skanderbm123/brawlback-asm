@@ -1326,6 +1326,42 @@ make unilaterally. Whoever picks this up next has the full wizard already
 built (`containers/QuickStart/*`) and just needs one of those two things to
 safely re-route `App.tsx` to it for first-run users.
 
+### 2026-07-29: launcher's Project+ mod install is unimplemented (self-documented, fails loudly)
+
+Checked `src/mod/installation.ts`/`src/mod/util.ts` (mod download/install
+backend for the launcher's "Mods" tab, never examined before this
+session). The launcher's `DefaultMods` enum
+(`src/settings/types.ts`) has exactly two options: `ProjectPlus` ("P+")
+and `vBrawl`. `fetchModLatestVersion()`:
+
+```ts
+export const fetchModLatestVersion = async (mod: DefaultMods) => {
+  //TODO add api calls
+  switch (mod) {
+    case DefaultMods.vBrawl:
+      return { version: 3.0, downloadUrl: "https://github.com/Brawlback-Team/vBrawlLauncherReleases/releases/download/3.0/Vanilla.V3.Launcher.+.SD.zip" };
+    case DefaultMods.ProjectPlus:
+      return { version: 3.0 };  // no downloadUrl at all
+  }
+};
+```
+
+`vBrawl` has a real, working Brawlback-Team release URL. **`ProjectPlus`
+has no `downloadUrl` at all** - matches the file's own `//TODO add api
+calls` comment, so this is self-documented incompleteness, not a hidden
+landmine. Confirmed it fails loudly rather than silently or crashing:
+`ModInstallation.downloadAndInstall()` in `installation.ts` has
+`if (!downloadUrl) { throw new Error(...) }` right where it's needed.
+
+**Worth flagging clearly anyway**: Project+ is a major, popular Brawl mod
+- `Project-Plus-Dolphin` was one of the originally-tracked repos in this
+whole effort (see the very top of this doc's repo map) - so this isn't a
+minor/obscure gap, it's half of the launcher's stated mod support being
+entirely unimplemented. Not fixed this session (no Brawlback-Team release
+infrastructure for Project+ to point at is visible anywhere in what this
+session has access to - same "needs real external info this session
+doesn't have" situation as the login backend).
+
 ### 2026-07-29: rollback resimulation orchestration - traced end to end, one suspected bug ruled out, one narrow edge case noted
 
 Traced `handleFrameDataRequest` → `getRemoteInputs` → `getLocalInputs` /
