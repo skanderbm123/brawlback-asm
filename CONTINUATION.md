@@ -1315,6 +1315,36 @@ make unilaterally. Whoever picks this up next has the full wizard already
 built (`containers/QuickStart/*`) and just needs one of those two things to
 safely re-route `App.tsx` to it for first-run users.
 
+### 2026-07-29: Netplay.cpp / frame-broadcast / ack logic - checked thoroughly, all clean
+
+Read `Netplay.cpp` (Dolphin clone) fully for the first time, and traced
+the live per-frame input broadcast path in `EXIBrawlback.cpp` and
+`TimeSync::ProcessFrameAck` carefully, since this is the actual per-frame
+send/ack mechanism - core to whether netcode holds together at all.
+
+- `BroadcastPlayerFrameData` (singular) is dead, superseded by
+  `BroadcastPlayerFrameDataWithPastFrames` - same "earlier version left in
+  place" pattern seen elsewhere today, not a bug.
+- **Initially suspected an off-by-one in the frame-broadcast loop**
+  (`endIdx = localPadQueueSize-1 - (back()->frame - minAckFrame)`, loop
+  condition `i > endIdx`) - looked like it might exclude `minAckFrame`
+  itself from the resend batch. Traced `TimeSync::getMinAckFrame()` to
+  check the exact semantics before concluding anything: it returns the
+  *minimum* of `lastFrameAcked[i]` across all remote players - i.e. the
+  frame that's already been confirmed received by every peer. Excluding
+  it from the resend batch is therefore **correct**, not a bug - it's
+  already been acknowledged, so there's nothing to gain by resending it.
+  Glad I checked the semantics before flagging this.
+- `ProcessFrameAck` (RTT/ping tracking, ack-timer bookkeeping) read
+  cleanly - no issues found.
+- `TimeSync::shouldStallFrame` (frame-diff stall logic, time-sync skip
+  logic) is explicitly a faithful port of Slippi's own proven
+  implementation (the file's own header comment says so) - didn't attempt
+  to re-derive this algorithm from scratch given the much lower prior
+  probability of a fresh bug in ported, previously-working code, versus
+  the genuinely novel Brawlback-specific glue code where today's real bugs
+  were actually found.
+
 ### 2026-07-29: BrawlbackUtility.cpp audit - two dead-code landmines, one "looked huge, actually inert" finding
 
 Read `BrawlbackUtility.cpp` (Dolphin clone) fully for the first time this
