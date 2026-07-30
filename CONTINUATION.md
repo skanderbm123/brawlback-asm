@@ -1315,6 +1315,48 @@ make unilaterally. Whoever picks this up next has the full wizard already
 built (`containers/QuickStart/*`) and just needs one of those two things to
 safely re-route `App.tsx` to it for first-run users.
 
+### 2026-07-29: BrawlbackUtility.cpp audit - two dead-code landmines, one "looked huge, actually inert" finding
+
+Read `BrawlbackUtility.cpp` (Dolphin clone) fully for the first time this
+session - referenced constantly from `EXIBrawlback.cpp` but never read
+end to end before.
+
+- **`isButtonPressed(u16 buttonBits, PADButtonBits button)` ignores its own
+  `button` parameter** - the body hardcodes `buttonBits & (PADButtonBits::Z << 8)`
+  regardless of what button was asked about. **Confirmed dead code** (zero
+  other references anywhere in `Core/`) - currently harmless, but a real
+  landmine for whoever eventually wires it up expecting it to check the
+  button they pass in. Not fixed (no active caller to fix it for), just
+  flagged so it doesn't surprise someone later.
+- **`Match::isPlayerFrameDataEqual`** only compares `.pad` fields, never
+  `.sysPad` - also **confirmed dead code** (zero other references), same
+  "landmine, not active" situation.
+- **The one that looked like a big deal and mostly wasn't**: the *live*
+  desync-detection check in `EXIBrawlback.cpp`'s `updateSync()` -
+  `isInputsEqual((*remoteInputs).pad, playerPredictedInputs.pad)` - has the
+  exact same gap (only compares `.pad`, never `.sysPad`), but this one is
+  actually *called*, driving the real rollback-trigger decision. Initially
+  looked like a serious live bug, especially once `getGamePadStatusInjection`
+  in brawlback-asm showed `BrawlbackPad& pad = isGamePad ? frameData.pad :
+  frameData.sysPad;` - implying `sysPad` is a real, distinct second input
+  path (looked like it might be Wii Remote support, alongside GameCube
+  controller support via `pad`). **Traced further and this is currently a
+  no-op, not a bug**: `PopulatePlayerFrameData` (`Rollback_Hooks.cpp`)
+  populates *both* fields identically from the same source -
+  `pfd.pad = Util::GamePadToBrawlbackPad(FrameLogic::inputBuffer);` and
+  `pfd.sysPad = Util::GamePadToBrawlbackPad(FrameLogic::inputBuffer);` back
+  to back, same input buffer. Since `sysPad` always equals `pad` at the
+  point of capture right now, a `.pad` mismatch always implies a `.sysPad`
+  mismatch too and vice versa - checking `.sysPad` separately can't
+  currently change the rollback decision either way. **Not fixed** -
+  wiring in a redundant-right-now check would be pure speculative
+  future-proofing for a Wii Remote / alternate-input-device path that
+  isn't actually implemented yet (the `isGamePad` branch exists on the
+  *injection* side but the *capture* side doesn't yet feed it genuinely
+  different data). Worth remembering this connection if that support is
+  ever built out: the injection code is ready for it, the capture code and
+  this desync check are not.
+
 ### 2026-07-29: checked whether BrawlHeaders alone could crack #73 - it can't, confirms existing blocker
 
 Tried one more angle before calling #73 fully blocked: `BrawlHeaders` is a
