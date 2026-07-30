@@ -1214,6 +1214,17 @@ session's separate Stadium-transformation fix (see way above) - concrete,
 cross-repo confirmation that this stage-selection system is a real, built
 feature waiting on the ASM side, not a half-finished guess.
 
+*(Correction/clarification found later while reading the rest of
+`Matchmaking.cpp`'s `handleMatchmaking()`: this hardcoded list is
+explicitly labeled in its own source as the **fallback** case - `//
+Default case, shouldn't ever really be hit but it's here just in case` -
+the real, primary source is `m_allowedStages` populated from the
+matchmaking server's response (`getResp["stages"]`), which this session
+obviously can't see (that's lylat.gg's live infrastructure). Doesn't
+change the conclusion above - the fallback list alone is still real,
+deliberate evidence that stage curation is a designed, working concept -
+just correcting which one is actually primary vs. backup for accuracy.)*
+
 **Fixed** (brawlback-asm commit `6d70df1`): replaced the hardcoded
 `Stages::Battle` with `static_cast<Stages::srStageKind>(GMMelee::stageChoice)`
 - `stageChoice` is populated by `PopulateMatchSettings()` from the
