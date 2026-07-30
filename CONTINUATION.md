@@ -1315,7 +1315,7 @@ make unilaterally. Whoever picks this up next has the full wizard already
 built (`containers/QuickStart/*`) and just needs one of those two things to
 safely re-route `App.tsx` to it for first-run users.
 
-### 2026-07-29: actually dug into IncrementalRB's internals - two real fixes applied, one serious lead flagged
+### 2026-07-29: actually dug into IncrementalRB's internals - three real fixes applied
 
 Pushed past the earlier "too risky to touch" caution and actually read
 `incremental_rb.cpp`/`mem.cpp`/`tiny_arena.cpp` line by line, since this is
@@ -1382,20 +1382,28 @@ next `memcpy` through it crashes. This lines up well with "the game
 crashes" style reports (#76) being intermittent and correlated with
 match length/connection quality rather than reproducible on demand.
 
-**Why this is flagged, not fixed**: I don't have confident insight into
-*why* eviction is deliberately skipped during resim in the first place -
-there could be a real reason (e.g. wanting the pre-resim baseline to
-remain available for something else within the same pass) that a blind
-"just evict every time" fix would break, and this is the single most
-central piece of code to how rollback state gets captured and restored at
-all. Getting this wrong risks a far worse and more confusing failure mode
-than any UI bug this session touched, and unlike the two fixes above, I
-don't have a version I'm confident is a strict improvement without
-understanding the original resim-eviction intent - that needs either the
-original author's context or a live rollback-heavy session to observe
-`afterCopies`/arena growth directly. Recording the full trace here so
-whoever has that context (or a debugger attached to a real match) doesn't
-have to re-derive it.
+**Update - found a fix that doesn't require touching the resim-eviction
+question at all (dolphin commit `0a3c0d2`).** Rather than changing *when*
+eviction happens (which I still don't have confident insight into - there
+could be a real reason resim skips it, e.g. wanting the pre-resim baseline
+available for something else within the same pass), the actual waste is
+narrower than that: `OnPagesWritten`'s alloc loop can simply start from
+`savestate.afterCopies.size()` instead of `0`, allocating only the delta
+needed to bring `afterCopies` up to `changedPages.size()` rather than
+appending `changedPages.size()` *more* entries regardless of what's
+already there. This reuses already-allocated slots in place (they get
+fresh data from that call's copy loop either way) instead of abandoning
+them. Verified this is a strict no-op for the normal post-eviction case
+(`afterCopies` starts empty, so the loop is identical to before) and only
+changes behavior in the accumulating-resim case, where `afterCopies.size()
+== changedPages.size()` now holds after every call instead of growing
+unbounded. Grepped every read site (`RollbackSavestate`'s three index
+paths) to confirm none of them ever needed `afterCopies` to be larger than
+`changedPages` - they only index by position within `changedPages`, so
+this doesn't remove anything any reader was relying on. This is a
+genuinely minimal, conservative fix - it doesn't touch or need to
+understand *why* eviction is skipped during resim, it just stops the
+resulting orphaned allocations from ever happening in the first place.
 
 ### 2026-07-29: #73 - one more theory checked and weakened, static-analysis avenues now exhausted
 
