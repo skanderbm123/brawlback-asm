@@ -1326,6 +1326,31 @@ make unilaterally. Whoever picks this up next has the full wizard already
 built (`containers/QuickStart/*`) and just needs one of those two things to
 safely re-route `App.tsx` to it for first-run users.
 
+### 2026-07-29: real launcher bug fixed - deleting a mod dropped every mod after it from the UI
+
+While checking the mod-management backend (prompted by the Project+
+finding just above), found a real, confirmable bug in
+`src/renderer/lib/hooks/useMods.ts`'s `deleteMod`. It correctly calls the
+main-process handler first (`window.electron.settings.deleteMod(index)` →
+`settingsManager.deleteMod`, which uses `modList.splice(id, 1)` - verified
+this removes exactly the one targeted mod, correct), but the renderer's
+own optimistic UI state update used `mods.mods.slice(0, index)` - which
+keeps everything *before* `index` but drops `index` *and everything after
+it*, not just the one deleted mod.
+
+Concretely: with mods `[A, B, C, D]`, deleting `B` (index 1) left the UI
+showing just `[A]` instead of `[A, C, D]` - even though the persisted
+`settings.json` was correct the whole time (this is a UI-display bug, not
+data loss - a full app restart would show the correct list again, since
+it re-reads from the correctly-updated settings file). Still a real,
+easily-triggered bug for a common action (anyone with more than one mod
+installed, deleting anything but the last one in the list).
+
+**Fixed** (launcher commit `b7bf61b`): changed to
+`[...mods.mods.slice(0, index), ...mods.mods.slice(index + 1)]`, matching
+`splice(index, 1)`'s semantics in an immutable/functional style consistent
+with the rest of this zustand store. Typecheck-clean.
+
 ### 2026-07-29: launcher's Project+ mod install is unimplemented (self-documented, fails loudly)
 
 Checked `src/mod/installation.ts`/`src/mod/util.ts` (mod download/install
