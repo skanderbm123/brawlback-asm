@@ -1315,6 +1315,51 @@ make unilaterally. Whoever picks this up next has the full wizard already
 built (`containers/QuickStart/*`) and just needs one of those two things to
 safely re-route `App.tsx` to it for first-run users.
 
+### 2026-07-29: Dolphin's Brawlback settings pane - two of three setting groups are non-functional
+
+Checked `DolphinQt/Settings/BrawlbackPane.cpp` (never examined before this
+session) against what the actual netcode reads, since this is the exact
+"UI vs. backend" mismatch pattern that's paid off repeatedly today
+(playkey path, ModsOptions text, dead launcher tabs). This pane has three
+`QGroupBox`s - only one of them does anything.
+
+- **"Delay Frames" spinbox (range 1-7) is completely non-functional.**
+  It reads/writes `SConfig::m_delayFrames`, but grepped all of `Core/` and
+  found **zero** other references to that field anywhere. The actual input
+  delay used throughout the real netcode - `TimeSync.cpp`'s
+  `frameDiffCheck`/display string, and `EXIBrawlback.cpp`'s
+  `localPlayerFramedata->frame += FRAME_DELAY` - all use `FRAME_DELAY`, a
+  **compile-time `const bs32 FRAME_DELAY = 1`** in the shared
+  `brawlback-common/BrawlbackConstants.h` submodule (same one brawlback-asm
+  uses, so ASM and Dolphin trivially agree on the value by construction -
+  the constant even has a `static_assert` tying it to `MAX_ROLLBACK_FRAMES`
+  for correctness). Moving this spinbox does nothing at all; the actual
+  delay is always 1 frame regardless of what a user sets here.
+- **"Save Brawlback Replays" checkbox and "Replay Location" folder picker
+  are also non-functional** - `m_brawlbackSaveReplays`/`m_brawlbackReplayDir`
+  have zero other references anywhere in `Core/` either. Consistent with
+  (not a new surprise on top of) the already-documented fact that
+  Brawlback hasn't defined a replay format yet (FAQ.md, and the launcher's
+  dead `ReplayBrowserPage`/`MainView` finding earlier this session) - the
+  settings UI got built ahead of the feature existing, same pattern as the
+  launcher's dead QuickStart wizard.
+- **Only "Force Custom Netplay Port"/custom port and "Force LAN IP"/LAN IP
+  actually work** - confirmed these `SConfig` fields (`m_slippiForceNetplayPort`,
+  `m_slippiNetplayPort`, `m_slippiForceLanIp`, `m_slippiLanIp`) are genuinely
+  read in `Matchmaking.cpp`'s `startMatchmaking()`.
+
+**Not fixed, and not a quick fix**: unlike the launcher bugs, there's no
+existing, working piece of code to just wire this up to - making "Delay
+Frames" real would mean either (a) making `FRAME_DELAY` itself
+configurable, which touches a shared compile-time constant with a
+determinism-critical `static_assert` relationship to `MAX_ROLLBACK_FRAMES`
+that both ASM and Dolphin depend on agreeing on, or (b) adding a new EXI
+message so a Dolphin-side runtime setting could be communicated to the
+ASM/game side and used instead of the constant - genuinely new protocol
+work, not a bug fix. Recording this clearly since a user finding this
+spinbox and concluding they've tuned their delay frames would be
+completely wrong, and that's worth knowing about even without a fix ready.
+
 ### 2026-07-29: re-audited the small brawlback-asm files - nothing new, a few notes worth recording
 
 Went back through the six smaller source files (`mem_exp_hooks.cpp`,
