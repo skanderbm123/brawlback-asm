@@ -1512,6 +1512,72 @@ findings. Confirmed via the Dolphin fork's own authoritative build
 config, not guessed - same standard of evidence as the earlier
 `playkey.ts` path fix.
 
+**CORRECTION + much bigger follow-up, same session, commit `fb26d04` -
+read this before trusting `23a5540`'s bundle name.** After the fix
+above, decided to verify against the actual live release bytes rather
+than stop at the CMakeLists.txt (which only proves what a *fresh build
+from current source* would produce, not necessarily what's *actually
+distributed* - a real distinction, and this time it mattered). Downloaded
+`project-lylat/dolphin`'s real "latest" release assets for all three
+platforms and inspected them directly:
+
+- **The real macOS bundle is `Dolphin.app` / `Dolphin`, not
+  `DolphinQt.app` / `DolphinQt`.** The distributed 5.0 release (dated
+  2022-06-07) predates whatever renamed the CMake `OUTPUT_NAME` to
+  `DolphinQt` - `23a5540`'s fix was well-evidenced but referenced a name
+  that isn't actually what's downloadable today. Corrected all four
+  files back to `Dolphin.app`/`Dolphin`.
+- **Far more serious**: `installDolphinOnMac` called `extractDmg()`,
+  which requires a real `.dmg` and throws immediately otherwise
+  (`Expected a dmg file, got ...`). The actual downloaded asset is a
+  `.zip` (`LylatDolphin-macos.zip`) - extraction failed on literally
+  every install attempt, before the bundle-name question was ever even
+  reached. Worse: that zip contains a single nested file misleadingly
+  named `*.tar.gz` that's actually zip-formatted content (confirmed with
+  `file` and by successfully opening it with `adm-zip`), which itself
+  contains the real `Dolphin.app`. Rewrote `installDolphinOnMac` to do
+  two-stage `adm-zip` extraction, dropping the `dmg`/`extractDmg`
+  dependency for this path entirely.
+- **Linux had the identical nested-archive shape**: the downloaded zip
+  contains one nested zip (versioned filename) containing the real
+  `Lylat_Online-x86_64.AppImage` + its `.zsync` file.
+  `installDolphinOnLinux` only extracted once, leaving the AppImage
+  buried inside an unextracted inner zip. Added the second extraction
+  stage. Also fixed `findDolphinExecutable`'s Linux detection, which
+  checked for `"Slippi_Online"`/`"Slippi_Playback"` filename prefixes -
+  the real file is `Lylat_Online-x86_64.AppImage` (matches neither, and
+  Lylat ships one unified build for both launch types anyway, so the
+  Online/Playback distinction doesn't even apply) - changed to a robust
+  `filename.endsWith(".AppImage")` check.
+- **Windows had a different but related issue**: the downloaded zip
+  wraps every file under one top-level folder
+  (`LylatDolphin-Windows/Dolphin.exe`, not `Dolphin.exe` at the root),
+  which `findDolphinExecutable`'s single-level directory scan would never
+  find. Added a flattening step to `installDolphinOnWindows` that moves
+  the wrapper folder's contents up one level after extraction.
+
+**All three platforms' fixes were functionally tested against the real,
+live release files** - downloaded via `curl`, extracted with the exact
+same `adm-zip`-based logic now in the source, verified the resulting
+directory structure matches what `findDolphinExecutable` expects
+(wrote a standalone Node script exercising the actual extraction logic,
+not just read the code and reasoned about it). This is the strongest
+verification standard used anywhere in this session, short of running
+the real Electron app - confirmed:
+`Dolphin.app/Contents/MacOS/Dolphin` exists after macOS extraction,
+`Lylat_Online-x86_64.AppImage` ends up findable at the Linux extraction
+root, `Dolphin.exe` ends up flattened to the Windows extraction root.
+
+**Net effect of `fb26d04`: Dolphin installation was completely
+non-functional on all three platforms before this fix** - not degraded,
+completely broken, on every OS the launcher supports. macOS threw on the
+very first extraction call. Linux silently produced an unusable nested
+zip sitting where the AppImage should be. Windows extracted successfully
+but the executable could never be found, one folder level too deep. This
+is very plausibly the single highest-impact fix in the entire session -
+without it, literally nobody on any platform could get past Dolphin
+installation at all.
+
 ### 2026-07-29: rollback resimulation orchestration - traced end to end, one suspected bug ruled out, one narrow edge case noted
 
 Traced `handleFrameDataRequest` → `getRemoteInputs` → `getLocalInputs` /
