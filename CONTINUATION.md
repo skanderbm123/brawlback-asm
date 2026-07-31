@@ -231,6 +231,70 @@ which is confirmed unreachable except where something under `containers/`
 is imported directly by one of the `pages/` files (worth checking file-by-
 file rather than assuming by directory name).
 
+**Continued the same session, all of the above now read.** All clean except:
+
+- **Real fix (commit `dbe045b`):** `components/MultiPathInput.tsx` (used by
+  `containers/Settings/ReplayOptions.tsx`, which IS live — confirmed via
+  `SettingsPage.tsx`'s "Replays" tab, which is one of `pages/settings/`'s
+  four real tabs). Its `assertValidPath` had broken logic for the case
+  where a newly-added directory is a *parent* of an already-tracked one:
+  it called `updatePaths(pathsToCheck.splice(i, 1))` — `Array.splice()`
+  returns the *removed* elements, not the remaining array, so this passed
+  a single-element array to `updatePaths` (which fully replaces the stored
+  `extraSlpPaths` setting) as if it were the complete desired list. In
+  practice this got immediately overwritten by `onAddClick`'s own
+  `updatePaths([...paths, newPath])` call (using the stale, pre-removal
+  `paths` closure), so the net effect was just that de-duplication silently
+  never worked — but the two calls are two independent, unawaited IPC round
+  trips with no ordering guarantee enforced in this code, so there was a
+  real latent risk of the wrong one landing last and truncating a user's
+  entire "Additional Replay Directories" list down to one entry. Rewrote
+  `assertValidPath` to return the correctly-deduplicated list (or `null` to
+  reject) instead of mutating/dispatching as a side effect, and centralized
+  the single `updatePaths` call in `onAddClick`.
+- **Cosmetic, same commit:** renamed user-facing "SLP" labels to "Replay" in
+  `ReplayOptions.tsx` and `MultiPathInput.tsx` ("Root SLP Directory" →
+  "Root Replay Directory", etc.) — Brawlback's replay format isn't `.slp`
+  (that's Melee/Slippi's, and per the finding above it isn't decided yet
+  for Brawlback), so the label was actively misleading even though the
+  underlying directory-picker mechanics are format-agnostic and already
+  correct. Did *not* touch the many non-live "SLP" references under the
+  confirmed-dead `containers/ReplayBrowser/`, `containers/Console/` (e.g.
+  `AddConnectionForm.tsx`'s "SLP files"), or internal-only comments/variable
+  names (`rootSlpPath` etc.) — those are either unreachable or not user-
+  facing, consistent with not touching what doesn't need touching.
+- `pages/base/AppBase.tsx`, `Menu.tsx` (real Brawlback-branded nav, already
+  correct), `pages/home/HomePage.tsx`, `NewsFeed.tsx` (already fixed
+  earlier this session, re-confirmed live and correct), `news_article/NewsArticle.tsx`,
+  `containers/Settings/MeleeOptions.tsx`, `DolphinSettings.tsx` all clean.
+  `pages/home/TwitterFeed.tsx` confirmed dead (defined, never imported).
+- Noted but not fixed, matching the already-established "accounts backend
+  needs Lylat's real info" gap: `UserHeader.tsx`'s "Log in" button is a
+  literal no-op (`onClick={() => console.log("login")}`), and
+  `services/auth/auth.service.ts` is unmodified Slippi Firebase auth code
+  reading `process.env.FIREBASE_*` — there's no known Brawlback/Lylat
+  Firebase project to point this at, so this is expected-incomplete, not a
+  fixable bug in isolation.
+- Noted but not fixed (small, live, cosmetic-severity, same category as
+  other stubs): `containers/Settings/ModsOptions.tsx`'s per-mod Edit icon
+  (`onEdit={(id) => console.log(id)}`) is a no-op — clicking it does
+  nothing. Not a data-loss risk like the MultiPathInput bug, just an
+  unimplemented affordance.
+
+**Renderer live-surface audit is now essentially complete**: everything
+reachable from `App.tsx`'s actual routes (`AppBase` → `Menu`/`PlayButton`/
+`UserHeader` chrome, `HomePage`/`NewsFeed`, `SettingsPage`'s 4 tabs and
+their `containers/Settings/*` implementations, plus `useMods`/`useAccount`/
+`useDolphinActions`/`auth.service.ts` in `lib/`/`services/`) has been read.
+Remaining truly-unexplored surface is limited to: `containers/Settings/AdvancedAppSettings.tsx`,
+`BuildInfo.tsx`, `HelpPage.tsx`, `SupportBox.tsx`, `SettingItem.tsx`,
+`Settings/index.tsx`, `Settings/types.ts` (all under `containers/Settings/` —
+reachability not yet individually confirmed, check whether each is actually
+imported by the 4 live tab files before assuming either way), plus a handful
+of shared `components/` (`PathInput`, `Checkbox`, `ConfirmationModal`,
+`IconMenu`, `ExternalLink`, `MarkdownContent`, `DevGuard`, `LoadingScreen`)
+that appeared as dependencies above but weren't opened themselves.
+
 ## 2026-07-28 session: THE REAL DOLPHIN FORK, and a real root cause for #1
 
 **Read this section before trusting anything below dated 2026-07-27 or
