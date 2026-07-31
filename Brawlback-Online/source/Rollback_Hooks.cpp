@@ -346,18 +346,24 @@ namespace Match {
     gmSetRule rules = {};
     void PopulateGameReport(GameReport& report)
     {
-        /*
         ftManager* fighterManager = g_ftManager;
 
         for (int i = 0; i < Netplay::getGameSettings().numPlayers; i++) {
-            Fighter* const fighter = fighterManager->getFighter(fighterManager->getEntryIdFromIndex(i));
-            s32 stocks = fighter->getOwner()->getStockCount();
+            // Matches the proven pattern in Util::PopulatePlayerFrameData -
+            // this originally called fighterManager->getFighter(entryId)
+            // with only one argument (getFighter actually takes two,
+            // (int entryId, int instanceIndex) per ft_manager.h), and
+            // Fighter itself doesn't need to be fetched at all here since
+            // ftOwner (which has getDamage()/getStockCount()) is reachable
+            // directly via fighterManager->getOwner(entryId).
+            ftOwner* ftowner = fighterManager->getOwner(fighterManager->getEntryIdFromIndex(i));
+            s32 stocks = ftowner->getStockCount();
             OSReport("Stock count player idx %i = %i\n", i, stocks);
             report.stocks[i] = stocks;
-            f64 damage = fighter->getOwner()->getDamage();
+            f64 damage = ftowner->getDamage();
             OSReport("Damage for player idx %i = %f\n", i, damage);
             report.damage[i] = damage;
-        }*/
+        }
         report.frame_duration = getCurrentFrame();
     }
     void SendGameReport(GameReport& report)
@@ -373,11 +379,9 @@ namespace Match {
             OSReport("Game report in stopGameScMeleeBeginningHook hook\n");
             
             if (Netplay::getGameSettings().numPlayers > 1) {
-                #if 0  // toggle for sending end match game stats
                 GameReport report;
                 PopulateGameReport(report);
                 SendGameReport(report);
-                #endif
             }
         }  
         Utils::RestoreRegs();
