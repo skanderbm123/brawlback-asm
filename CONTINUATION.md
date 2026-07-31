@@ -14,6 +14,60 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-07-31 session (continued): swept the rest of `Brawlback-Online/source/`
+
+Read every remaining source file in `Brawlback-Online/source/` not yet
+covered this session: `EXI_hooks.cpp`, `exi_packet.cpp`, `utils.cpp`,
+`BrawlbackHeadersImpl.cpp`, `StageFixes.cpp`, `rel.cpp`, `mem_exp_hooks.cpp`
+(all small, 16-333 lines each). Didn't go further into the rest of
+`Rollback_Hooks.cpp` (~1100 lines still unread) because most of what's left
+there is raw inline PowerPC assembly hooking hardcoded retail addresses -
+not safely reviewable via static reading without real disassembly/decomp
+cross-reference for each address, same blocker as everything else that
+needs Ghidra. Stuck to C++ logic, where static analysis actually works.
+
+- **Fixed (commit `b5ed0bc`, minor/diagnostic-only):** `EXIPacket`'s no-arg
+  and 1-arg constructors logged `size` (the class member - not yet
+  initialized at that point in construction, since the failure path returns
+  before `this->size = new_size;` runs) instead of the locally-computed
+  `new_size`, in their allocation-failure `OSReport`. Only matters if
+  `MEMAllocFromExpHeapEx` actually fails (rare, already-exceptional path),
+  and only affects the accuracy of a log message, not program behavior -
+  but a genuine copy-paste-style bug, safe one-line-per-constructor fix,
+  build-verified.
+- **Confirmed inert, not touched:** `BrawlbackHeadersImpl.cpp`'s
+  `#if __cplusplus == 199711L` branch (an old-Metrowerks-compiler-compatible
+  set of constructors/assignment-operators, presumably kept for a toolchain
+  this project no longer actually uses) has an empty
+  `PlayerSettings::PlayerSettings() {}` - in that branch specifically,
+  `PlayerSettings`'s fields have no in-class default initializers (those
+  only exist in the `#else`/modern-C++ branch this project's actual clang
+  toolchain takes), so every field would be genuinely uninitialized garbage
+  if this path ever actually compiled. Confirmed via the real build
+  (`python3 ./bbk.py setup && make`, this whole session) that the active
+  toolchain is clang with a modern C++ standard, so `__cplusplus` is never
+  literally `199711L` and this branch is dead for the real build - same
+  category as the `containers/Settings` dead files found in the launcher
+  earlier this session. Left alone, but worth knowing if this project ever
+  gets built with an actual Metrowerks/CodeWarrior toolchain again.
+- `EXI_hooks.cpp`, `utils.cpp`, `StageFixes.cpp`, `rel.cpp`,
+  `mem_exp_hooks.cpp`: read in full, all clean. `utils.cpp`'s `myMemmove`
+  is dead code (defined, never called anywhere - confirmed via grep and the
+  build map) but not itself buggy, so nothing to do there either way.
+  Double-checked `MemExpHooks::getFreeSize()`'s zero-arg call site in
+  `myMemmove` before flagging it as a possible bug - it has default
+  arguments (`heap = mainHeap, alignment = 4`) declared in
+  `mem_exp_hooks.h`, so that one's a non-issue, false alarm caught before
+  reporting it.
+
+`Brawlback-Online/source/`'s C++ logic is now essentially fully read this
+session (everything except the untouched, decomp-gated raw-ASM tail of
+`Rollback_Hooks.cpp`). Total fixes across this whole "more ASM work"
+stretch: the game-report enable (`975ecd5`), the pad-queue precedence bug
+(`374cf3f`), and this logging fix (`b5ed0bc`) - all build-verified, none
+live-tested, consistent with what's achievable without the PC the user is
+away from for ~6 days.
+
 ## 2026-07-31 session (continued): operator-precedence bug in the pad-queue wraparound check
 
 Continued the ASM audit into other parts of `Rollback_Hooks.cpp` not yet
