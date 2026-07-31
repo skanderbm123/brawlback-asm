@@ -14,6 +14,54 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-07-31 session: launcher `main.ts` audit — broken `brawlback://` deep link
+
+Continuing the code-level audit of `brawlback-launcher` (local clone at
+`/workspace/brawlback-launcher`, no fork exists yet, see below for why). Per
+the user's explicit instruction this session ("skip what needa a real pc for
+now and contonue working on it, ill do an intensive test when i can"),
+continuing to work through files that can be verified without a live PC test.
+
+**Bug found and fixed in `src/main/main.ts` (commit `50bdba7` in the local
+launcher clone):** `electron-builder.json`'s `"protocols"` config registers
+the OS-level custom URL scheme as `"brawlback"` — that's what Windows/macOS/
+Linux actually hand the app when a `brawlback://...` link is opened. But
+`main.ts` had a leftover Slippi constant `slippiProtocol = "slippi"` and
+checked incoming URIs against `slippi:`. Since the OS never sends a
+`slippi://` URI (it sends `brawlback://`), the check always failed, the
+handler fell through to treating the whole URI string as a local file path
+(`fileExists(aUrl)`), that always failed too, and the function returned
+having done nothing. Net effect: the entire deep-link / "download and open
+replay from a URL" feature was silently dead — clicking a `brawlback://`
+link anywhere (e.g. a future lylat.gg "open in launcher" button) would do
+absolutely nothing, no error, nothing in the UI. Fixed by renaming the
+constant to `brawlbackProtocol = "brawlback"` and fixing the comparison/
+switch-case to match. Also renamed `handleSlippiURI(Async)` →
+`handleBrawlbackURI(Async)` and fixed a "Only allow a single Slippi App
+instance" leftover comment, consistent with the branding sweep pattern
+established earlier.
+
+Left alone (flagged with a comment, not guessed): inside that same handler,
+the actual replay download URL is hardcoded to
+`https://storage.googleapis.com/slippi.appspot.com/${replayPath}` — this is
+Slippi's own real GCS bucket, serving Melee replays only. No Brawlback/Lylat
+equivalent bucket is known to exist (matches the earlier-established finding
+that Brawlback's replay format/hosting isn't defined yet). So even with the
+protocol fix, a real `brawlback://download?path=...` link would still fail
+at the download step — that's expected/correct until Brawlback or Lylat
+stands up its own replay storage. Did not invent a URL for this.
+
+Verified via `npx tsc --noEmit -p tsconfig.json` (clean, exit 0) — no live
+PC test possible for the deep-link OS integration itself (needs an actual
+OS-level protocol registration + click), consistent with what's deferred
+this session per the user's instruction.
+
+Next planned targets in the same clone (not yet read this session):
+`src/main/preload.ts`, `src/main/ipc.ts`/`api.ts`/`setup.ts` if they exist —
+i.e. the rest of the main-process/IPC surface, following the same audit
+methodology (Slippi-leftover branding/URLs, dead-vs-live code paths,
+external URL/format verification where checkable without a live PC).
+
 ## 2026-07-28 session: THE REAL DOLPHIN FORK, and a real root cause for #1
 
 **Read this section before trusting anything below dated 2026-07-27 or
