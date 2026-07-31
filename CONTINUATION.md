@@ -56,11 +56,33 @@ PC test possible for the deep-link OS integration itself (needs an actual
 OS-level protocol registration + click), consistent with what's deferred
 this session per the user's instruction.
 
-Next planned targets in the same clone (not yet read this session):
-`src/main/preload.ts`, `src/main/ipc.ts`/`api.ts`/`setup.ts` if they exist —
-i.e. the rest of the main-process/IPC surface, following the same audit
-methodology (Slippi-leftover branding/URLs, dead-vs-live code paths,
-external URL/format verification where checkable without a live PC).
+Continued the same session: read the rest of `src/main/` —
+`preload.ts`, `api.ts`, `ipc.ts`, `setup.ts`, `github.ts`, `verifyIso.ts`,
+`newsFeed.ts` (already fixed earlier), `util.ts`, `installModules.ts`,
+`types.ts` (empty file, unused). All clean / already-correct except one
+minor pre-existing data issue, not code-fixed:
+
+- `src/main/verifyIso.ts`: `isoHashes.set("0e95949ac585f357e79fcd34b20670b5dca97ac2", { valid: VALID, name: "unknown Brawl copy sha1 hash" })`
+  is a 40-hex-char SHA1-length key, but the only function actually wired up
+  (`verifyIsoMD5`, called from `setup.ts`'s `ipc_checkValidIso` handler)
+  looks up 32-hex-char MD5 digests. This entry can never match, so whatever
+  Brawl copy that SHA1 was recorded for will show as "unknown" instead of
+  "valid" in the ISO validator. Harmless (falls back to UNKNOWN, not
+  INVALID), and there's no way to recover the correct MD5 for that copy
+  without the actual ISO file, so left as-is rather than guessing a hash.
+  The dead `_verifyIsoSHA1` function in the same file (imported in
+  `setup.ts` but never called) is the leftover legacy SHA1-based verifier
+  this key used to belong to, per its own "legacy" comment.
+- `SavedConnectionsList.tsx`'s `getLatestGithubReleaseVersion("project-slippi", "Nintendont")`
+  call was re-confirmed still dead/unreachable (same `MainView`-tree
+  console-mirroring code already established as unreachable earlier this
+  session) — not re-fixed, consistent with that earlier finding.
+
+`src/main/` is now fully read and audited. Next unexplored areas for a
+future pass: the `@dolphin`, `@settings`, `@console`, `@broadcast`,
+`@replays` feature modules' own `setup.ts`/`api.ts`/`ipc.ts` files (each
+has its own IPC surface, not yet swept the same way), and the renderer's
+remaining page components.
 
 ## 2026-07-28 session: THE REAL DOLPHIN FORK, and a real root cause for #1
 
