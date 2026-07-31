@@ -1431,6 +1431,23 @@ infrastructure for Project+ to point at is visible anywhere in what this
 session has access to - same "needs real external info this session
 doesn't have" situation as the login backend).
 
+**Sharper picture, found right after**: `defaultSettings.ts` ships "P+"
+as a **pre-seeded default mod entry** (`{ name: "P+", ..., default: true
+}`, alongside "vBrawl") - and `ModsOptions.tsx` renders zero edit/delete
+icons for any mod where `mod.default === true`
+(`{!mod.default && <EditIcon .../>}` / `{!mod.default &&
+<DeleteIcon .../>}`). So this isn't just "a user manually tries to add
+Project+ and hits an error" - **it's a permanently visible, non-removable
+entry in the Mods list from the very first launch**, that will always
+fail if selected, since there's nowhere for it to actually download from.
+Worth knowing precisely how visible this gap is to a real user.
+
+(Also noticed in the same pass: `settings.dolphinPath` (singular, in
+`defaultSettings.ts`) is dead - grepped and it's never read anywhere
+except its own default declaration. The real, live fields are
+`netplayDolphinPath`/`playbackDolphinPath`. Harmless unused cruft, not
+touched.)
+
 ### 2026-07-29: rollback resimulation orchestration - traced end to end, one suspected bug ruled out, one narrow edge case noted
 
 Traced `handleFrameDataRequest` → `getRemoteInputs` → `getLocalInputs` /
