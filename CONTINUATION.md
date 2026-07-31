@@ -1578,6 +1578,36 @@ is very plausibly the single highest-impact fix in the entire session -
 without it, literally nobody on any platform could get past Dolphin
 installation at all.
 
+### 2026-07-29: Help menu sent users to Slippi's real Discord server, not Brawlback's
+
+Checked `dolphin.service.ts`/`useDolphinListeners.ts`/`handleDolphinExitCode.ts`
+per the standing plan from last checkpoint - the first two were clean,
+but `handleDolphinExitCode.ts` had leftover `"the Slippi Discord"` text in
+its Windows/Linux crash-message strings (same pattern as the earlier
+`SupportBox.tsx` fix, commit `7968663`, just missed since it lives in a
+different directory). Swept for more and found something more serious:
+`main/menu.ts`'s Help menu (`"Open Slippi Discord Server"`, present in
+*both* the macOS and Windows/Linux menu template variants) hardcoded
+`http://discord.gg/pPfEaW5` - **Slippi's real, actual Discord invite
+link**. Clicking Help → Discord from this launcher sent users to the
+wrong community's server entirely, not a broken/cosmetic link but an
+actively-wrong destination.
+
+**Fixed** (launcher commit `974bc62`): both menu items now use the
+already-correct `socials.discordUrl` constant (`common/constants.ts`,
+fixed earlier this session in `b0da467`) instead of a second, independent
+hardcoded copy of the wrong URL, and are relabeled "Open Brawlback
+Discord Server". Also fixed the three "Slippi Discord" text leftovers
+(`dolphin/util.ts`'s "no Dolphin found" error,
+`handleDolphinExitCode.ts`'s two crash-report messages). Typecheck-clean.
+
+Worth noting for future sweeps: this confirms hardcoded-URL duplicates
+(not just hardcoded text) can hide in unexpected files (`main/menu.ts`
+isn't somewhere the earlier "fix all Slippi text" pass would obviously
+look) - a `grep -r` for the literal old URL/text across the *whole* `src/`
+tree, not just the renderer, is worth repeating periodically as more of
+this codebase gets read.
+
 ### 2026-07-29: real, high-visibility bug fixed - Project+ auto-download errored on every single launch
 
 Read `useAppInitialization()` (`renderer/lib/hooks/useApp.ts`, the
