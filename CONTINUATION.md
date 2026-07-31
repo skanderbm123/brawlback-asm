@@ -1326,6 +1326,26 @@ make unilaterally. Whoever picks this up next has the full wizard already
 built (`containers/QuickStart/*`) and just needs one of those two things to
 safely re-route `App.tsx` to it for first-run users.
 
+### 2026-07-29: real launcher bug fixed - stale-mod filter was a silent no-op
+
+Read `settingsManager.ts` in full (main-process settings persistence
+layer, only seen in fragments before this session). Found a classic JS
+bug in the constructor: a block meant to remove mods whose `elfPath`/
+`sdCardPath` no longer exist on disk called `restoredSettings.mods.filter(...)`
+but never assigned the result back anywhere.
+`Array.prototype.filter()` doesn't mutate in place - it returns a new
+array - so this whole check was a silent no-op. Mods pointing at files
+that had been deleted/moved/on an unplugged drive would stay in settings
+forever, right next to the `isoPath` existence check one block above it,
+which *does* correctly reassign (`restoredSettings.settings.isoPath =
+null`) - the working sibling made the broken one easy to spot by
+contrast.
+
+**Fixed** (launcher commit `8270999`): `restoredSettings.mods =
+restoredSettings.mods.filter(...)`. Matches the existing scope/pattern
+(in-memory filtering at load time, same as the isoPath check - not
+immediately persisted back to the settings file either). Typecheck-clean.
+
 ### 2026-07-29: checked addElfPath/addGamePath for an INI key collision - none found, minor fragility noted
 
 Followed `setMod`'s ini-writing (`addElfPath`/`addSdCardPath` in
