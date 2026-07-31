@@ -337,6 +337,33 @@ shared `components/` (`PathInput`, `Checkbox`, `ConfirmationModal`,
 `IconMenu`, `ExternalLink`, `MarkdownContent`, `DevGuard`, `Message`) that
 appeared as dependencies above but weren't opened themselves.
 
+**Continued the same session: read all of the remaining shared
+`components/`** (`SettingItem.tsx`, `PathInput.tsx`, `ExternalLink.tsx`,
+`ConfirmationModal.tsx`, `Message.tsx`/`IconMessage`, `FormInputs/Checkbox.tsx`,
+`IconMenu.tsx`, `MarkdownContent.tsx`, `DevGuard.tsx`) — all clean, generic,
+no Slippi leftovers or bugs found. `DevGuard`'s advanced-user Easter egg
+(`BuildInfo`'s 7-click toggle, gates one Linux-conditional Dolphin-path
+setting in `DolphinSettings.tsx`) is currently only reachable via the
+dead `containers/Settings/index.tsx`/`SettingsView` chain — `LoadingView.tsx`'s
+`<BuildInfo />` call doesn't pass `enableAdvancedUserClick`, so on the live
+app this toggle can't currently be triggered by a user at all. Not a bug,
+just a natural consequence of the already-documented dead-code split; no
+action taken.
+
+**This closes out the live-renderer audit for this session.** Every file
+reachable from `App.tsx`'s real routes has now been read: the `pages/`
+shell, all 4 `SettingsPage` tabs and their `containers/Settings/*`
+implementations, and every shared `components/` dependency they pull in.
+Took the `LoadingView.tsx` lesson seriously and individually grep-verified
+the last 5 unconfirmed files rather than assuming by directory:
+`Settings/index.tsx` is imported only by the confirmed-dead `SettingsView.tsx`;
+`AdvancedAppSettings.tsx` and `HelpPage.tsx` are imported only by that same
+`Settings/index.tsx`; `SupportBox.tsx` isn't imported by anything at all
+outside its own file (fully orphaned, not even wired into the dead
+`Settings/index.tsx`). All confirmed genuinely dead, not just assumed.
+`Settings/types.ts` is just type declarations, not independently a
+reachability question. The live-renderer audit is complete.
+
 ## 2026-07-28 session: THE REAL DOLPHIN FORK, and a real root cause for #1
 
 **Read this section before trusting anything below dated 2026-07-27 or
