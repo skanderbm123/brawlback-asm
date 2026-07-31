@@ -1578,6 +1578,37 @@ is very plausibly the single highest-impact fix in the entire session -
 without it, literally nobody on any platform could get past Dolphin
 installation at all.
 
+### 2026-07-29: real bug fixed in IniFile.ts's save() - could drop Gecko-code lines
+
+User asked to skip anything needing a live test and keep auditing code.
+Checked `dolphin/config/iniFile.ts` (the shared read/write layer under
+every single Dolphin config operation - `addGamePath`, `addElfPath`,
+`addSdCardPath`, `setSlippiSettings`, everything fixed earlier today
+goes through this), never verified directly before.
+
+Found a real bug in `save()`: a `Section` can legitimately hold both raw
+verbatim lines (comments, or Gecko-code-style lines starting with
+`$`/`+`/`*` - the *loading* code explicitly supports mixing these with
+regular key=value pairs within the same section) and key=value entries
+at the same time. `save()` only ever wrote one or the other -
+`if (section.keysOrder.length === 0) { write section.lines } else {
+write section.keysOrder }` - so any section with *both* would silently
+lose its raw lines (Gecko codes, most likely) on every save.
+
+**Fixed** (launcher commit `84211af`): write `section.lines` first, then
+`section.keysOrder`, in the non-empty branch too - matches what loading
+already supports, so `save()` now round-trips everything `init()` can
+produce. Verified the exact fixed logic directly (a section with one raw
+Gecko-style line and one key=value pair - both now survive) since
+`ts-node`'s path-alias resolution didn't cooperate cleanly outside the
+full webpack build for a true import-based test.
+
+Doesn't appear to be actively biting anything else this session touched
+- the sections written by `addGamePath`/`addElfPath`/etc. (`General`) are
+plain key=value only in practice - but this is foundational, shared
+infrastructure, worth getting right regardless of whether today's other
+fixes happen to dodge it.
+
 ### 2026-07-29: verified --version/_isOutOfDate for real, fixed a small download.ts inconsistency
 
 Two follow-ups after the big install-pipeline fix:
