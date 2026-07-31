@@ -1448,6 +1448,21 @@ except its own default declaration. The real, live fields are
 `netplayDolphinPath`/`playbackDolphinPath`. Harmless unused cruft, not
 touched.)
 
+**Positive finding, worth recording too - vBrawl's mod pipeline is
+actually confirmed working end-to-end, not just "looks plausible".**
+Since this session has real network access, actually downloaded
+`vBrawlLauncherReleases`' `3.0` release zip and inspected its contents
+rather than assuming: it contains exactly `Brawl Netplay V3.elf` and
+`sd.raw` at the archive root (1.49MB + 537MB, no subfolder nesting).
+`ModInstallation._installMod()` extracts straight into
+`modsDir/vBrawl/` (`zip.extractAllTo(destinationFolder, true)`), which
+produces exactly `modsDir/vBrawl/Brawl Netplay V3.elf` and
+`modsDir/vBrawl/sd.raw` - matching `defaultSettings.ts`'s expected
+`elfPath`/`sdCardPath` for vBrawl exactly. Real URL, real file, correct
+internal structure, correct extraction target - genuinely verified, not
+just plausible-looking. Good contrast with Project+: one of the two
+default mods is solid and ready, the other has nothing behind it at all.
+
 ### 2026-07-29: rollback resimulation orchestration - traced end to end, one suspected bug ruled out, one narrow edge case noted
 
 Traced `handleFrameDataRequest` → `getRemoteInputs` → `getLocalInputs` /
