@@ -1463,6 +1463,14 @@ internal structure, correct extraction target - genuinely verified, not
 just plausible-looking. Good contrast with Project+: one of the two
 default mods is solid and ready, the other has nothing behind it at all.
 
+Also re-confirmed `lylat.gg` itself is live, real infrastructure right
+now (`curl -IL https://lylat.gg` → `200 OK`, real nginx/Ubuntu headers) -
+consistent with earlier sessions' findings, just re-verified fresh. Can't
+test the actual ENet/UDP matchmaking protocol (port 43113) from here
+without a full Dolphin build and real client handshake, but the domain
+being live and serving is good corroborating evidence the backend
+Brawlback points at is operational, not dead/parked.
+
 ### 2026-07-29: rollback resimulation orchestration - traced end to end, one suspected bug ruled out, one narrow edge case noted
 
 Traced `handleFrameDataRequest` → `getRemoteInputs` → `getLocalInputs` /
