@@ -154,12 +154,28 @@ session — the entire console-mirroring and broadcast/spectate feature set
 is unreachable from the live app, not just that one file. Not worth
 auditing further until/unless that UI gets wired back up.
 
-Next unexplored areas for a future pass: `replays/` module's remaining
-files (`folderTreeService.ts`, `loadFolder.ts`, `replays.worker.ts`, `setup.ts`,
-`ipc.ts`, `types.ts` — only `loadFile.ts` read so far), and the renderer's
-page/container components under `src/renderer/containers/` and
-`src/renderer/pages/` (only spot-checked a few so far: `ImportDolphinSettingsStep.tsx`,
-`Header/index.tsx`, `SavedConnectionsList.tsx`).
+**`replays/` module (all 9 files, now fully read):** no new distinct bugs —
+`loadFolder.ts`, `folderTreeService.ts`, `setup.ts`, `ipc.ts`, `types.ts`,
+`replays.worker.ts`/`replays.worker.interface.ts`, `api.ts` are all
+format-agnostic plumbing (fine) except `replays.worker.ts`'s
+`calculateGameStats`, which — like `loadFile.ts` already documented above —
+directly instantiates `@slippi/slippi-js`'s `SlippiGame` and calls
+`game.getStats()`. Same already-recorded gap (zero Brawl-specific replay
+format/stats work exists yet), not a separate new finding. Also worth
+noting for whenever that format work happens: `calculateGameStats` hard-
+requires exactly 2 players (`if (settings.players.length !== 2) throw`),
+inherited from Slippi's 1v1-only stats engine — Brawl matches commonly have
+more than 2 players, so this constraint will need revisiting as part of
+that future design work, not fixable in isolation now.
+
+`src/main/`, `@dolphin`, `@settings`, `mod/`, and `replays/` are now all
+fully read and audited this session. Remaining unexplored areas for a
+future pass: the renderer's page/container components under
+`src/renderer/containers/` and `src/renderer/pages/` (only spot-checked a
+few so far: `ImportDolphinSettingsStep.tsx`, `Header/index.tsx`,
+`SavedConnectionsList.tsx`) — noting `@console`/`@broadcast`'s containers
+can be skipped per the dead-`MainView` finding above, so the renderer pass
+should focus on `Home`, `Settings`, `ReplayBrowser`, and `QuickStart`.
 
 ## 2026-07-28 session: THE REAL DOLPHIN FORK, and a real root cause for #1
 
