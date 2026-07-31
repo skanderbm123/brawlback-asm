@@ -14,6 +14,109 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-07-31 session (continued): issue #73 deep-dive — thorough negative result, ruled out 4 hypotheses
+
+User is stepping away for ~6 days and asked to continue with "more ASM work"
+in the meantime. Re-added `skanderbm123/ssbb-decomp` to this session (it
+wasn't in scope by default) to check whether it could unblock any of the
+Ghidra/decomp-gated issues.
+
+**`ssbb-decomp` reality check: it does NOT help with #72/#73/#75/#76.**
+It's the real `doldecomp/brawl` project, forked and genuinely useful for the
+Stadium fix (confirmed - `mo_stage/st_stadium` and its `include/st_stadium`
+headers are real, named-field decompiled code). But menu/CSS/character-select
+code (`sora_menu_sel_char`, `sora_adv_menu_name`, etc.) all live under
+`src/mo_stub/` - auto-generated placeholder stubs like
+`int fn_10_1C3E0(void* p) { return *(int*)((char*)p + 12); }`, not real
+decompiled/named code, and there's no `mu_select_character_name_entry`
+anywhere in the tree. `include/lib/BrawlHeaders` in this repo is the exact
+same opaque-blob header set already checked in `brawlback-asm` (`char
+_0[0x94]` for the name-entry widget, no named fields). So decomp coverage is
+real but uneven: stages got real work, menus/CSS didn't. This doesn't move
+#72's remaining piece (CSS text-entry offsets) forward.
+
+**Given that, spent the "more ASM work" time on the most promising still-open
+lead: issue #73 (costume desync, "P2 loading in as the first secret
+costume"), following up on the explicit next-step the 2026-07-29 correction
+left behind** ("worth checking next whether `this->gameSettings` on the host
+stays intact between its own broadcast and the client's reply, and whether
+the ASM-side P1/P2 assumptions line up with this struct's layout"). Traced
+the *entire* pipeline end to end, across both repos, via pure static
+analysis (no live test, no decomp needed for any of this - all of it is
+named, readable code):
+
+1. **ASM capture** (`Rollback_Hooks.cpp::fillOutGameSettings`, called from
+   `setNextAnyOkirakuCaseFive` on "Loaded into online training room", i.e.
+   well after CSS closes): reads `g_GameGlobal->m_selCharData->m_playersInitData[0].m_colorNo`/`.m_colorFileNo`
+   - always index `[0]`, always writes to `settings.playerSettings[0]`.
+   Confirmed via `gm_sel_char_data.h` that `m_playersInitData` here is typed
+   `gmPlayerInitData[7]` - **the exact same struct type**
+   (`gm_global_mode_melee.h`) later written to on the apply side, not a
+   different same-shaped-but-differently-ordered struct. No mismatch risk
+   here.
+2. **Ordering hypothesis, tested and disproven**: `setNextAnyOkirakuCaseFive`
+   sends `CMD_START_MATCH` (own settings) **before** `CMD_FIND_OPPONENT`
+   (which is what triggers matchmaking, connection, and eventually the
+   host's first broadcast) - confirmed by reading the function directly,
+   they're two sequential `EXIPacket::CreateAndSend` calls in program order
+   on the same EXI channel, same CPU thread. So there's no race where a
+   client's own local `gameSettings.playerSettings[0]` could still be
+   default/unpopulated when the host's broadcast arrives - I initially
+   suspected exactly this (would explain "first secret costume" as a
+   zero-initialized `charColor`/`colorFileIndex` default) but the code
+   rules it out.
+3. **Dolphin-side merge** (`EXIBrawlback.cpp::ProcessGameSettings`, both
+   branches read in full): traced host and non-host paths separately.
+   Non-host: copies its own local data (currently in slot 0) into slot 1,
+   then overwrites slot 0 with the opponent's (host's) data, then
+   broadcasts this *fully-merged* 2-player struct back - correct. Host:
+   receives that merged reply, pulls the client's real data from slot 1 of
+   it (which the non-host path guarantees is correct), leaves its own slot
+   0 untouched. Also confirmed `this->gameSettings` (the persistent member
+   both `handleStartMatch`'s memcpy and `ProcessGameSettings` operate on)
+   is only ever touched from two call sites that run on the same thread in
+   guaranteed sequence (`NetplayThreadFunc`'s initial broadcast, then later
+   its own main loop's `ProcessNetReceive` → `ProcessGameSettings`) - no
+   cross-thread race on it either.
+4. **Shared-header version-skew hypothesis, tested and disproven**: the
+   `GameSettings`/`PlayerSettings` wire structs come from the
+   `Brawlback-Team/brawlback-common` submodule, included independently by
+   both repos. Checked both pins directly (`git ls-tree` on the Dolphin
+   repo's submodule entry vs. `git rev-parse HEAD` inside brawlback-asm's
+   checkout of the same submodule) - **identical commit,
+   `33d728c8d047374e63ec94bfd9eb11061c1f7953`**, on both sides. No drift.
+   (Side note while checking this: the Dolphin clone's submodule directory
+   was sitting completely uninitialized/empty this whole session until now
+   - a plain `git clone` doesn't pull submodules. Worth remembering for any
+   future session working in `/workspace/brawlback-team-dolphin`:
+   `git submodule update --init --recursive` if something under
+   `include/brawlback-common` or similar looks missing.)
+5. **ASM re-application** (`CheckIsMatched` → `MergeGameSettingsIntoGame` →
+   `GMMelee::PopulateMatchSettings` → `FillInMeleeObj`): re-read all four in
+   sequence, confirmed straightforward `[0]`/`[1]`-indexed copies at every
+   step with no swap, no off-by-one, and (per the 2026-07-29 fix)
+   endianness-corrected before any of this runs. `FillInMeleeObj` writes
+   `g_globalMelee.m_playersInitData[i].m_colorNo = costumeChoices[i]` /
+   `.m_colorFileNo = fileIndexChoices[i]` directly, same struct type as
+   point 1, no aliasing.
+
+**Conclusion: the entire netcode/merge pipeline, on both the ASM and
+Dolphin sides, is internally consistent and correctly indexed for
+`charColor`/`colorFileIndex`, as far as this session can inspect it.**
+This isn't a fix, but it's a real result: it rules out four concrete,
+plausible hypotheses (index inversion - already known from the earlier
+revert, start-order race, struct-type mismatch, submodule version skew)
+with actual evidence rather than leaving them as open guesses for the next
+session to re-derive. What's left, genuinely needing either a live two-client
+repro or Ghidra-level tracing (same blocker as before, now narrowed): **how
+Brawl's own internal code actually consumes `m_colorNo`/`m_colorFileNo` to
+pick a costume file** - that logic is not decompiled anywhere accessible to
+this session (confirmed above, `ssbb-decomp` doesn't cover it), so a bug
+there is invisible to static analysis of this repo alone. If a future
+session gets Ghidra or better decomp coverage of Brawl's character/costume
+loading code, that's exactly where to look next - not the netcode merge
+logic, which this session now has high confidence is not the culprit.
+
 ## 2026-07-31 session: launcher `main.ts` audit — broken `brawlback://` deep link
 
 Continuing the code-level audit of `brawlback-launcher` (local clone at
