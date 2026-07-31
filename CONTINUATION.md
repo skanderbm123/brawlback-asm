@@ -1578,6 +1578,44 @@ is very plausibly the single highest-impact fix in the entire session -
 without it, literally nobody on any platform could get past Dolphin
 installation at all.
 
+### 2026-07-29: real, high-visibility bug fixed - Project+ auto-download errored on every single launch
+
+Read `useAppInitialization()` (`renderer/lib/hooks/useApp.ts`, the
+function that runs unconditionally on every app start, before this
+session never checked). Found it auto-downloads *both* default mods on
+every launch:
+
+```ts
+[DefaultMods.vBrawl, DefaultMods.ProjectPlus].map(async (m) => {
+  return dolphinService.downloadDefaultMod(m).catch((err) => {
+    showError(`Failed to install ${m} Mod. Error: ...`);
+  });
+});
+```
+
+Given the already-documented Project+ finding (`fetchModLatestVersion`
+has no `downloadUrl` for `ProjectPlus`, always throws), and confirmed by
+re-reading `ModInstallation.validate()` closely: a failed install never
+reaches `_installMod()`, so `metadata.json` never gets written - meaning
+there's no "already tried and failed, don't retry" state to fall back on
+between launches. **This meant every single user saw a "Failed to
+install ProjectPlus Mod" error toast on every single app launch,
+unconditionally** - not just when opening the Mods tab, not just once,
+forever, for every user, regardless of whether they ever cared about
+Project+ at all. Much more disruptive than the earlier "permanently
+broken menu entry" framing suggested - this is the app's very first
+impression on every single launch.
+
+**Fixed** (launcher commit `52a4fc7`): removed `DefaultMods.ProjectPlus`
+from this automatic startup list. Zero functional cost - Project+ never
+successfully installs either way, and (per the earlier finding) there's
+no UI path to manually trigger a reinstall anyway, since default mods get
+no edit/delete affordance in `ModsOptions.tsx`. "Never attempted" and
+"always fails loudly" are functionally identical outcomes for the
+feature itself; this just removes the recurring, unconditional error
+noise. Re-add once Brawlback-Team hosts a real Project+ release.
+Typecheck-clean.
+
 ### 2026-07-29: dead Melee-specific Gecko code found (geckoCode.ts/config.ts) - inert, flagged not fixed
 
 While checking `IniFile`'s only real consumers (`geckoCode.ts`,
