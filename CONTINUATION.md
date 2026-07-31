@@ -1471,6 +1471,47 @@ without a full Dolphin build and real client handshake, but the domain
 being live and serving is good corroborating evidence the backend
 Brawlback points at is operational, not dead/parked.
 
+### 2026-07-29: macOS support was fully broken - wrong app bundle name everywhere, now fixed
+
+While reading `install/installation.ts` in full, `userFolder`/`sysFolder`
+both hardcoded macOS paths through `"Slippi Dolphin.app"`. Checked whether
+that's actually right before assuming a bug - it isn't. The Dolphin
+clone's own build config is authoritative here: `DolphinQt/CMakeLists.txt`
+(APPLE block) has `set(BUNDLE_PATH ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/DolphinQt.app)`
+and `set_target_properties(dolphin-emu PROPERTIES ... OUTPUT_NAME DolphinQt)`
+- the real bundle is **`DolphinQt.app`**, containing a binary named
+**`DolphinQt`** (at `Contents/MacOS/DolphinQt`), not "Slippi Dolphin"
+anywhere.
+
+Grepped for every other occurrence and this turned out to be a
+much bigger, more thorough sweep than expected - **six more instances**
+across three more files, all wrong the same way:
+
+- `dolphin/util.ts`'s `findDolphinExecutable`: the darwin filename check
+  (`endsWith("Dolphin.app")` - would have coincidentally matched
+  "DolphinQt.app" too, red herring) and, critically, the binary path
+  construction (`Contents/MacOS/Slippi Dolphin`) - this one doesn't
+  coincidentally work, it's the actual reason launching Dolphin on macOS
+  would fail even if the `.app` were found.
+- `dolphin/install/macos.ts` - the actual DMG-install pipeline: resource
+  path detection, the extracted-files cleanup filter (`file !== "Slippi
+  Dolphin.app"` - would have deleted the real, correctly-named
+  `DolphinQt.app` right after extracting it, along with everything else!),
+  permission-fixing (chmod/chown), and the update-in-place User-folder
+  migration all referenced the wrong names.
+- `dolphin/ipc.ts` - a doc comment with the same wrong name (cosmetic,
+  fixed for accuracy, no functional effect).
+
+**Fixed** (launcher commit `23a5540`), all four files, typecheck-clean.
+This is a significant one: **macOS support was fully broken, not just
+degraded** - between the wrong binary path (can't launch Dolphin at all)
+and the cleanup-filter bug (would have deleted the real app right after
+installing it), no macOS user could have gotten this launcher working at
+all before this fix, regardless of anything else in this session's
+findings. Confirmed via the Dolphin fork's own authoritative build
+config, not guessed - same standard of evidence as the earlier
+`playkey.ts` path fix.
+
 ### 2026-07-29: rollback resimulation orchestration - traced end to end, one suspected bug ruled out, one narrow edge case noted
 
 Traced `handleFrameDataRequest` → `getRemoteInputs` → `getLocalInputs` /
