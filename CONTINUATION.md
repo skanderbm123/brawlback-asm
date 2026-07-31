@@ -14,6 +14,51 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-07-31 session (continued): operator-precedence bug in the pad-queue wraparound check
+
+Continued the ASM audit into other parts of `Rollback_Hooks.cpp` not yet
+carefully traced this session. Found two compiler-flagged
+`-Wparentheses` warnings in `GameLoop`/`ProcessGameSimulationFrame`
+(`'&' has lower precedence than '!=' / '!='  will be evaluated first`) and
+worked out both by hand rather than assuming they're equally bug-worthy:
+
+- **Line ~607 (real bug, fixed, commit `374cf3f`):**
+  `if(queue_param1 != queue_param2 + 1 & 3)` parsed as
+  `(queue_param1 != queue_param2 + 1) & 3` - a 0/1 boolean ANDed with 3,
+  which is always just the boolean unchanged, so the `& 3` never actually
+  masked `queue_param2 + 1` as presumably intended. This code manually
+  pre-processes Brawl's own `gfPadStatusQueue` (raw pointer arithmetic on
+  a hardcoded live-instance address, `0x805ba480`) before calling
+  `push_gfPadStatusQueue` - reads `m_front`/`m_back` by raw offset,
+  decrements/wraps `m_back` in a local var, and conditionally commits that
+  decrement back to the real struct. Before touching this, pulled up
+  `doldecomp-brawl`'s real decompiled `gfPadStatusQueue::push()`/`pop()`
+  (`src/sora/gf/gf_pad_queue.cpp` - concrete named-field source, not a
+  stub) to confirm this subsystem genuinely uses mod-N ring-buffer
+  wraparound (`(m_back + 1) % NRows`, matching the local code's own
+  explicit `queue_param2 = 3` wrap value), rather than guessing blind.
+  With the bug, the only case that actually changes is when
+  `queue_param2 == 3` (wraps to compare against `4`, which the front index
+  - always 0-3 - can never equal, so the commit always fired there instead
+  of correctly comparing against the wrapped value `0`) - a narrow-window
+  queue-consistency bug, exactly the flavor of "occasional instability in
+  long rollback-heavy matches" this project keeps chasing. Fixed by adding
+  the parens the warning suggests. Build-verified (warning count dropped
+  by exactly one, as expected); **not live-tested** - this runs every
+  single simulation frame, so this is a good candidate to watch closely
+  once real testing is possible.
+- **Line ~966/979 (false alarm, left alone):** `(...) >> 2 & 1 != 0`
+  parses as `(...) >> 2 & (1 != 0)`. Since `1 != 0` is the compile-time
+  constant `true`/`1`, this reduces to `(shifted value) & 1` - which, used
+  directly in a boolean `if` condition, is behaviorally identical to the
+  presumably-intended `((shifted value) & 1) != 0` (both are truthy iff
+  that one bit is set). No actual behavior difference between the two
+  readings here, so "fixing" it would be pure churn with zero functional
+  change - left as-is rather than touching working code for cosmetics.
+  Worth remembering this distinction for any future `-Wparentheses`
+  warning in this codebase: work out both parsings by hand before
+  assuming a fix is needed, since not all of them are.
+
 ## 2026-07-31 session (continued): issue #76 — fixed and enabled the end-of-match report to Lylat
 
 Following the #73 negative-result work below (which didn't produce a code
