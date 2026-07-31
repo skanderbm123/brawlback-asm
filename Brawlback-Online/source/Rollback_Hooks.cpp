@@ -604,7 +604,20 @@ namespace FrameAdvance {
         {
             queue_param2 = 3;
         }
-        if(queue_param1 != queue_param2 + 1 & 3)
+        // `&` binds looser than `!=` in C++, so the original
+        // `queue_param1 != queue_param2 + 1 & 3` parsed as
+        // `(queue_param1 != queue_param2 + 1) & 3`, i.e. a 0/1 boolean
+        // ANDed with 3 - always just the boolean itself, so the intended
+        // mod-4 wraparound mask on `queue_param2 + 1` was silently never
+        // applied. Only actually changes behavior when queue_param2 == 3
+        // (queue_param2 + 1 == 4, which queue_param1 - always 0-3 - can
+        // never equal, so the memmove below always fired in that case
+        // instead of correctly comparing against the wrapped value 0).
+        // Confirmed this subsystem uses mod-N/ring-buffer wraparound via
+        // doldecomp-brawl's real decompiled gfPadStatusQueue::push()/pop()
+        // (gf_pad_queue.cpp), which this hook manually pre-processes
+        // before calling push_gfPadStatusQueue below.
+        if(queue_param1 != (queue_param2 + 1 & 3))
         {
             memmove((void*)(queue + 2), &queue_param2, sizeof(bu16));
         }
