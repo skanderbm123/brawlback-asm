@@ -169,13 +169,67 @@ more than 2 players, so this constraint will need revisiting as part of
 that future design work, not fixable in isolation now.
 
 `src/main/`, `@dolphin`, `@settings`, `mod/`, and `replays/` are now all
-fully read and audited this session. Remaining unexplored areas for a
-future pass: the renderer's page/container components under
-`src/renderer/containers/` and `src/renderer/pages/` (only spot-checked a
-few so far: `ImportDolphinSettingsStep.tsx`, `Header/index.tsx`,
-`SavedConnectionsList.tsx`) — noting `@console`/`@broadcast`'s containers
-can be skipped per the dead-`MainView` finding above, so the renderer pass
-should focus on `Home`, `Settings`, `ReplayBrowser`, and `QuickStart`.
+fully read and audited this session.
+
+**IMPORTANT CORRECTION, same session — the renderer's real live app shell is
+NOT what it looks like from `views/MainView.tsx`.** Read `renderer/App.tsx`
+(the actual root) directly instead of assuming from `views/`, and found:
+
+```
+routesObj = [
+  { path: "/", element: <AppBase />, children: [
+      { index: true, element: <HomePage /> },
+      { path: "replays/*", element: <Replay /> },   // <Replay/> = a literal
+                                                      // `<h3>Replay</h3>` stub
+                                                      // defined right in App.tsx
+      { path: "settings/*", element: <SettingsPage /> },
+  ]},
+  { path: "/main/*", element: <Navigate replace to="/" /> },
+]
+```
+
+So the *actual* live pages are `pages/base/AppBase.tsx` (→ `Menu.tsx` +
+`UserHeader.tsx` + `PlayButton.tsx` + an `<Outlet/>`), `pages/home/HomePage.tsx`,
+and `pages/settings/SettingsPage.tsx` — a genuinely Brawlback-specific shell
+(`Menu.tsx` has a real Brawlback logo and mod-aware "Replays → vBrawl / P+"
+nav entries, not inherited Slippi structure at all). The `/replays/*` route
+is currently just the inline placeholder component, **not**
+`@/containers/ReplayBrowser/ReplayBrowserPage` — confirmed via grep that
+`ReplayBrowserPage` is only ever imported by `views/MainView.tsx`.
+
+And `views/MainView.tsx` itself is dead (confirmed earlier this session via
+grep — never imported anywhere outside its own file). Pulling on that
+thread further: `views/LandingView.tsx` (which renders the `QuickStart`
+flow, including `ImportDolphinSettingsStep.tsx`) is **also** dead by the
+same test — grepped for `LandingView` repo-wide, only its own definition
+matches, nothing imports it. Net effect: essentially all of `renderer/views/`
+and everything solely reachable through it — `MainView`, `LandingView`,
+`Console`, `SpectatePage`, `QuickStart` (including `ImportDolphinSettingsStep`),
+`Header`, and the real `ReplayBrowser`/`ReplayBrowserPage` — is currently
+orphaned from the live routing. This reads as a mid-refactor state: `pages/`
+is the newer, actively-being-built Brawlback-specific shell; `views/` +
+the `containers/` it pulled in is the older, more Slippi-shaped structure
+being replaced, not yet deleted.
+
+**This means the `checkDesktopAppDolphin`/"Slippi Desktop App" path fix
+documented above (commit `3203934`) is NOT currently a live bug** — its
+only consumer, `ImportDolphinSettingsStep.tsx`, is unreachable via the
+same dead-`LandingView` chain. Correcting that characterization here rather
+than editing the commit message: the fix itself is still correct and worth
+keeping (harmless, consistent with the sibling `main/setup.ts` fix, and
+will matter immediately if/when the QuickStart flow gets reconnected to
+live routing), it just isn't fixing something a real user would hit today.
+The `main.ts` `brawlback://` protocol fix (`50bdba7`) is unaffected by this
+correction — OS-level deep-link handling doesn't go through React routing
+at all, so that one remains a genuine live-reachable fix.
+
+**Revised remaining scope, reflecting what's actually live:** the real
+next audit targets are `pages/base/AppBase.tsx`, `Menu.tsx`, `PlayButton.tsx`,
+`UserHeader.tsx`, `pages/home/HomePage.tsx`, `NewsFeed.tsx`, `TwitterFeed.tsx`,
+and `pages/settings/SettingsPage.tsx` — not the `containers/`/`views/` tree,
+which is confirmed unreachable except where something under `containers/`
+is imported directly by one of the `pages/` files (worth checking file-by-
+file rather than assuming by directory name).
 
 ## 2026-07-28 session: THE REAL DOLPHIN FORK, and a real root cause for #1
 
