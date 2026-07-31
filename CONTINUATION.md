@@ -1578,6 +1578,32 @@ is very plausibly the single highest-impact fix in the entire session -
 without it, literally nobody on any platform could get past Dolphin
 installation at all.
 
+### 2026-07-29: verified --version/_isOutOfDate for real, fixed a small download.ts inconsistency
+
+Two follow-ups after the big install-pipeline fix:
+
+- **Verified `_isOutOfDate`'s `--version` dependency is real, not
+  assumed.** Checked the Dolphin clone's actual CLI parsing
+  (`UICommon/CommandLineParse.cpp`: `parser->usage(...).version(Common::GetScmRevStr())`,
+  using the `optparse` library which auto-registers a working
+  `--version` flag from a `.version()` call) and the real output format
+  (`Common/Version.cpp`: `"Dolphin " ["[branch] "] + SCM_DESC_STR`, e.g.
+  `"Dolphin [master] 5.0-19870-g1234567"`). Tested `semver.coerce()`
+  against that exact noisy format (not just the bare `"5.0"` tested
+  earlier) - correctly extracts `5.0.0`. This confirms the earlier
+  `_isOutOfDate` fix (from much earlier this session) genuinely works
+  against what Dolphin actually outputs, not just a plausible guess.
+- **Fixed a small, real inconsistency in `utils/download.ts`** (launcher
+  commit `d1cca92`): `createWriteStream` used `{ flags: "wx" }`
+  (exclusive create - fails if the destination already exists)
+  unconditionally, contradicting the function's own `overwrite`
+  parameter, which is supposed to permit exactly that. Changed to `"w"`.
+  Low real-world severity today since both real callers already
+  pre-check `fileExists` before calling `download()` at all, so this
+  specific path isn't currently reachable in normal use - but a genuine
+  latent inconsistency, cheap and safe to close while already in this
+  file's neighborhood.
+
 ### 2026-07-29: rollback resimulation orchestration - traced end to end, one suspected bug ruled out, one narrow edge case noted
 
 Traced `handleFrameDataRequest` → `getRemoteInputs` → `getLocalInputs` /
