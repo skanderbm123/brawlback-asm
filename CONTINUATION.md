@@ -1578,6 +1578,28 @@ is very plausibly the single highest-impact fix in the entire session -
 without it, literally nobody on any platform could get past Dolphin
 installation at all.
 
+### 2026-07-29: dead Melee-specific Gecko code found (geckoCode.ts/config.ts) - inert, flagged not fixed
+
+While checking `IniFile`'s only real consumers (`geckoCode.ts`,
+`config.ts`'s `setBootToCss`), found `updateBootToCssCode`
+(`dolphin/util.ts`) hardcodes a "Boot to CSS" Gecko code -
+`041BFA20 38600002`, credited to "Dan Salvato, Achilles" (well-known
+Melee modding community figures) - a **Melee-specific memory address**
+(GALE01's address space), not Brawl's (RSBE01, entirely different
+memory layout). Applying this to a Brawl instance would be meaningless
+at best.
+
+**Confirmed inert, not touched**: `updateBootToCssCode` has zero callers
+anywhere in the codebase, and "Boot to CSS" isn't referenced from any UI
+component either - there's no way for a user to currently trigger this
+at all. Consistent with the session's broader pattern (Slippi-inherited
+leftovers that are either live-and-need-fixing, like the install
+pipeline, or dead-and-harmless as long as they stay disconnected, like
+this). Flagging clearly rather than "fixing" dead code: if a future
+"boot directly to CSS" feature ever gets wired up for Brawl, it needs a
+real Brawl-specific Gecko code at the right address, not this Melee one
+carried over unchanged.
+
 ### 2026-07-29: real bug fixed in IniFile.ts's save() - could drop Gecko-code lines
 
 User asked to skip anything needing a live test and keep auditing code.
