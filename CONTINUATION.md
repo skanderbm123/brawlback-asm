@@ -14,6 +14,49 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-07-31 session (continued): issue #76 — fixed and enabled the end-of-match report to Lylat
+
+Following the #73 negative-result work below (which didn't produce a code
+fix), looked for a genuine fixable bug elsewhere and found one: issue #76's
+"report winner to Lylat" piece. `Match::PopulateGameReport`'s real
+stock/damage-reading logic was entirely `/* ... */`-commented out (leaving
+`report.stocks[]`/`report.damage[]` as uninitialized stack garbage), and its
+only call site in `StopGameScMeleeHook` was additionally wrapped in
+`#if 0` - so the game has never once sent `CMD_MATCH_END` to Dolphin.
+
+Root cause of why it was disabled, not just "unclear why" anymore: the
+commented-out draft called `fighterManager->getFighter(entryId)` with one
+argument, but `ft_manager.h` declares `getFighter(int entryId, int
+instanceIndex)` - two required arguments. That's a real compile error if
+naively uncommented, which is almost certainly why someone commented it out
+and never finished it, rather than a deliberate feature flag. Fixed
+(commit `975ecd5`) by using the exact pattern already proven live and
+working two functions above it in the same file
+(`Util::PopulatePlayerFrameData`): `fighterManager->getOwner(entryId)`
+directly gives an `ftOwner*` with `getDamage()`/`getStockCount()` - no need
+to fetch a `Fighter*` via the broken call at all. Removed the `#if 0`
+wrapper so it actually runs.
+
+Checked the Dolphin-side receiver before enabling this, since it's never
+been exercised with real data before: `EXIBrawlback.cpp`'s `handleEndMatch`
+is fully implemented and POSTs a real JSON report (uid, playKey, per-player
+damage/stocks) to `https://lylat.gg/reports` - a real, live endpoint, not a
+stub. It was just unreachable because the ASM side never sent anything.
+This significantly de-risked the fix - the receiving end was already done
+and presumably tested against something at some point, just never actually
+fed real data.
+
+Build-verified: full `python3 ./bbk.py setup && make` from the repo root
+links cleanly (`Brawlback-Online.rel` output), only the same pre-existing
+unrelated warnings as before this change. **Not live-tested** - confirming
+the POST actually lands correctly on lylat.gg's side, and that
+`this->matchmaking->GetPlayerInfo()[i]` on the Dolphin side has real uids
+to pair against by the time this fires, both need an actual match to
+verify. This addresses one of #76's three bundled asks (report to Lylat);
+the other two (return to CSS with player info, live-update opponent's
+screen on character change) are still open, same as before - those are
+new subsystems, not a comment-and-flag fix like this one was.
+
 ## 2026-07-31 session (continued): issue #73 deep-dive — thorough negative result, ruled out 4 hypotheses
 
 User is stepping away for ~6 days and asked to continue with "more ASM work"
