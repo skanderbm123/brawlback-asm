@@ -78,11 +78,88 @@ minor pre-existing data issue, not code-fixed:
   console-mirroring code already established as unreachable earlier this
   session) — not re-fixed, consistent with that earlier finding.
 
-`src/main/` is now fully read and audited. Next unexplored areas for a
-future pass: the `@dolphin`, `@settings`, `@console`, `@broadcast`,
-`@replays` feature modules' own `setup.ts`/`api.ts`/`ipc.ts` files (each
-has its own IPC surface, not yet swept the same way), and the renderer's
-remaining page components.
+`src/main/` is now fully read and audited.
+
+**Continued the same session, `@dolphin` module (17 files, all read):**
+
+- **Fixed, live bug (commit `3203934`):** `dolphin/setup.ts`'s
+  `checkDesktopAppDolphin` handler — reachable on *every app launch* via
+  `useApp.ts`'s init hook — still checked
+  `app.getPath("appData")/"Slippi Desktop App"`, the real Slippi folder,
+  while the sibling `deleteDesktopAppPath` in `main/setup.ts` had already
+  been fixed to `"Brawlback Desktop App"` in an earlier commit. On any
+  machine where the user has genuinely used real Slippi before (plausible —
+  Melee and Brawl modding communities overlap a lot), this falsely
+  triggered Brawlback's QuickStart "Import old Dolphin settings" step
+  (`ImportDolphinSettingsStep.tsx`), which is a real, live-reachable
+  onboarding screen offering to import the *Melee* Slippi Dolphin's
+  netplay/playback settings into the Brawl-based Dolphin instance. Fixed to
+  match the already-corrected path. Also fixed a stale `"DolphinQt.app"`
+  comment in `dolphin/ipc.ts` left over from the corrected macOS bundle
+  name (see `fb26d04` from earlier this session).
+- **Confirmed root cause for a known gap, not fixed (needs a real feature
+  build, not a bug fix):** `dolphin/instance.ts`'s `PlaybackDolphinInstance.play()`
+  always launches Dolphin with `-i <commPath>` (a JSON comm-file handshake,
+  Slippi's own custom CLI flag for replay-communication/playback control).
+  Checked the actual Brawlback/Lylat Dolphin fork's CLI parser
+  (`/workspace/brawlback-team-dolphin/Source/Core/UICommon/CommandLineParse.cpp`)
+  — it has no `-i`/`--input` option at all, and a repo-wide search found no
+  `ReplayComm`/`PlaybackStatus`-equivalent class anywhere in that Dolphin
+  fork. So the launcher's entire "watch replay" pipeline
+  (`playReplayAndShowStats` in `main.ts`, `PlaybackDolphinInstance`, this
+  `-i` flag) points at a Dolphin-side feature that was never ported over
+  from Slippi. This is concrete evidence for (and sharpens) the
+  already-known "replay format/spectating needs Brawlback's own format
+  decisions" punch-list item — it's not a small fix, it needs real design +
+  C++ work on the Dolphin side. Not attempted here.
+- Also confirmed at the code level (further hard evidence for the same
+  known gap): `replays/loadFile.ts` imports and calls `SlippiGame` directly
+  from `@slippi/slippi-js` to parse local replay files — i.e. the local
+  Replay Browser page literally has zero Brawl-specific work done; it's
+  Melee's own `.slp` binary parser, completely unported. Any real
+  Brawlback replay file (whatever format eventually gets chosen) would fail
+  to load here. Same underlying gap as the point above, just the "browse
+  local files" side of it rather than the "watch via Dolphin" side.
+- `config/geckoCode.ts`'s line-filter (`line.length !== 0 || line[0] !== "#"`)
+  is backwards (should be `&&`, not `||` — as written it never filters
+  anything, comments/blank lines pass straight into the Gecko-code line
+  parser). Confirmed dead code though: the only caller chain
+  (`config/config.ts` → `dolphin/util.ts`'s `updateBootToCssCode`) has zero
+  callers anywhere in the codebase, same as the already-established
+  "Boot to CSS" dead-code finding from earlier this session. Left unfixed,
+  consistent with not touching confirmed-unreachable code.
+- `dolphin/manager.ts`, `api.ts`, `ipc.ts`, `types.ts`, `config/config.ts`
+  (the reachable parts), `install/download.ts`, `install/fetchLatestVersion.ts`
+  (already fixed earlier this session, re-confirmed correct) all clean.
+
+**`@settings` module (6 files, all read):** all clean — `settingsManager.ts`'s
+earlier no-op-filter fix (`8270999`) confirmed still correct, `defaultSettings.ts`
+already fully rebranded, `setup.ts`/`api.ts`/`ipc.ts`/`types.ts` are just
+wiring/type declarations with nothing Slippi-specific left.
+
+**`mod/` module (2 files, both read):** clean. `mod/util.ts`'s
+`fetchModLatestVersion` stub for `DefaultMods.ProjectPlus` (no `downloadUrl`,
+`//TODO add api calls`) is the same already-known "Project+ has no working
+download/hosting" limitation, not something fixable from the launcher side.
+
+**`@console`/`@broadcast` modules: deliberately not audited.** Verified
+`renderer/views/MainView.tsx` (which is what routes to `Console` and
+`SpectatePage`, the only UI entry points into these two main-process
+modules) is never imported/rendered anywhere in the app — confirmed via a
+repo-wide grep for `MainView`, only its own definition matches.
+`renderer/App.tsx` mounts `HomePage`/`ReplayBrowserPage` directly instead.
+This matches (and generalizes) the earlier-established "`SavedConnectionsList.tsx`'s
+Nintendont reference is unreachable dead code" finding from before this
+session — the entire console-mirroring and broadcast/spectate feature set
+is unreachable from the live app, not just that one file. Not worth
+auditing further until/unless that UI gets wired back up.
+
+Next unexplored areas for a future pass: `replays/` module's remaining
+files (`folderTreeService.ts`, `loadFolder.ts`, `replays.worker.ts`, `setup.ts`,
+`ipc.ts`, `types.ts` — only `loadFile.ts` read so far), and the renderer's
+page/container components under `src/renderer/containers/` and
+`src/renderer/pages/` (only spot-checked a few so far: `ImportDolphinSettingsStep.tsx`,
+`Header/index.tsx`, `SavedConnectionsList.tsx`).
 
 ## 2026-07-28 session: THE REAL DOLPHIN FORK, and a real root cause for #1
 
