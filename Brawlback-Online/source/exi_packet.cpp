@@ -12,7 +12,9 @@ EXIPacket::EXIPacket() {
 
     u8* new_packet = (u8*)MEMAllocFromExpHeapEx(MemExpHooks::mainHeap, new_size, 32);
     if (!new_packet) {
-        OSReport("Failed to alloc %u bytes! Heap space available: %u\n", size, MemExpHooks::getFreeSize(MemExpHooks::mainHeap, 4));
+        // was logging the not-yet-initialized `this->size` member instead
+        // of the actual attempted allocation size
+        OSReport("Failed to alloc %u bytes! Heap space available: %u\n", new_size, MemExpHooks::getFreeSize(MemExpHooks::mainHeap, 4));
         return;
     }
 
@@ -22,14 +24,15 @@ EXIPacket::EXIPacket() {
     // set our size/src ptr so the Send() function knows how much/what to send
     this->size = new_size;
     this->source = new_packet;
-    this->cmd = EXICmd; 
+    this->cmd = EXICmd;
 }
-EXIPacket::EXIPacket(u8 EXICmd) { 
+EXIPacket::EXIPacket(u8 EXICmd) {
     unsigned int new_size = sizeof(EXICmd);
 
     u8* new_packet = (u8*)MEMAllocFromExpHeapEx(MemExpHooks::mainHeap, new_size, 32);
     if (!new_packet) {
-        OSReport("Failed to alloc %u bytes! Heap space available: %u\n", size, MemExpHooks::getFreeSize(MemExpHooks::mainHeap, 4));
+        // same not-yet-initialized `this->size` mistake as above
+        OSReport("Failed to alloc %u bytes! Heap space available: %u\n", new_size, MemExpHooks::getFreeSize(MemExpHooks::mainHeap, 4));
         return;
     }
 
