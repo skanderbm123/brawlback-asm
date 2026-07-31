@@ -286,14 +286,56 @@ reachable from `App.tsx`'s actual routes (`AppBase` → `Menu`/`PlayButton`/
 `UserHeader` chrome, `HomePage`/`NewsFeed`, `SettingsPage`'s 4 tabs and
 their `containers/Settings/*` implementations, plus `useMods`/`useAccount`/
 `useDolphinActions`/`auth.service.ts` in `lib/`/`services/`) has been read.
+
+**Continued the same session, found the biggest branding bug yet (commit
+`5f81251`).** Tracing `App.tsx`'s `!initialized` early-return path (shown
+before the main UI mounts, on literally every single app launch) led to
+`views/LoadingView.tsx`, which is genuinely live despite living under
+`views/` (the dead-tree assumption doesn't hold file-by-file — checked and
+confirmed this one specifically). It renders `LoadingScreen` from
+`components/LoadingScreen.tsx`, which used `BouncingSlippiLogo` as its
+spinner icon, and `LoadingView.tsx` itself applied `withSlippiBackground` as
+a page watermark. Both loaded the real `slippi-logo.svg` asset — meaning
+the actual Slippi logo, animated (bounce + barrel-roll on hover) plus a
+faint full-page watermark copy of it, was the first thing every Brawlback
+user saw on every single launch, before anything else in the app even
+loads. This is a strictly worse instance of the same class of bug as the
+Discord-link fix from earlier this session, just far more visible (100% of
+launches vs. a menu item).
+
+Fixed by renaming `BouncingSlippiLogo` → `BouncingBrawlbackLogo` and
+`withSlippiBackground` → `withBrawlbackBackground` (files, exports, and all
+call sites, including updating the two additionally-affected but currently-
+dead `views/SettingsView.tsx` and `views/LandingView.tsx` for consistency),
+swapping in the existing `brawlback_padding_dark.png` asset (already used
+correctly elsewhere, e.g. `Menu.tsx`'s sidebar logo) in place of
+`slippi-logo.svg`. `npx tsc --noEmit` clean throughout.
+
+Also confirmed and left alone (dead code, only reachable via the
+already-established-dead `containers/Header/index.tsx`): one more
+`slippi-logo.svg` reference there, plus a `services/slippi/slippi.service.ts`
+GraphQL client — that one's actually fine as-is, its backend URL is read
+from `process.env.SLIPPI_GRAPHQL_ENDPOINT` (parameterized, not hardcoded),
+so it's just inert without real Brawlback/Lylat backend env vars configured
+— same already-known "accounts backend needs Lylat's real info" gap, no new
+finding.
+
+**Lesson reinforced this pass: "lives under `views/`" is not sufficient
+grounds to assume dead code** — `LoadingView.tsx` is the counterexample.
+Each file's actual import chain back to `App.tsx` needs checking
+individually; the earlier `views/`-is-dead generalization was directionally
+right (most of it is) but not a safe blanket rule.
+
 Remaining truly-unexplored surface is limited to: `containers/Settings/AdvancedAppSettings.tsx`,
-`BuildInfo.tsx`, `HelpPage.tsx`, `SupportBox.tsx`, `SettingItem.tsx`,
-`Settings/index.tsx`, `Settings/types.ts` (all under `containers/Settings/` —
-reachability not yet individually confirmed, check whether each is actually
-imported by the 4 live tab files before assuming either way), plus a handful
-of shared `components/` (`PathInput`, `Checkbox`, `ConfirmationModal`,
-`IconMenu`, `ExternalLink`, `MarkdownContent`, `DevGuard`, `LoadingScreen`)
-that appeared as dependencies above but weren't opened themselves.
+`BuildInfo.tsx` (now confirmed live via `LoadingView.tsx`, read and clean —
+see the `BuildInfo` note above), `HelpPage.tsx`, `SupportBox.tsx`,
+`SettingItem.tsx` (confirmed live, imported by all 4 live Settings tabs),
+`Settings/index.tsx`, `Settings/types.ts` (reachability of the remaining
+unread ones not yet individually confirmed — check each against `App.tsx`'s
+real import graph rather than assuming by directory), plus a handful of
+shared `components/` (`PathInput`, `Checkbox`, `ConfirmationModal`,
+`IconMenu`, `ExternalLink`, `MarkdownContent`, `DevGuard`, `Message`) that
+appeared as dependencies above but weren't opened themselves.
 
 ## 2026-07-28 session: THE REAL DOLPHIN FORK, and a real root cause for #1
 
