@@ -14,6 +14,102 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-07-31 session (continued): the "slow and boring work" pass — a real stack-corruption bug, found via disassembly not guessing
+
+User explicitly asked to do the slow work on the raw-PowerPC-asm hooks I'd
+been skipping as "needs Ghidra." Found a way to make a meaningful chunk of
+that tractable without actual Ghidra:
+
+**New tool discovered: real symbol databases already in this environment.**
+- `lib/BrawlHeaders/RSBE01.lst` (in brawlback-asm itself) - ~1900 curated
+  global-variable RAM addresses (e.g. `901812A0: g_GameFrame`,
+  `805A0040: g_gfPadSystem`).
+- `doldecomp-brawl/config/RSBE01_02/symbols.txt` - ~34,800 entries covering
+  the *entire* static RSBE01 Rev 2 executable (exactly the revision this
+  project targets), including demangled C++ names for known functions
+  (`process__6gfTaskFQ26gfTask11ProcessType` = `gfTask::process(...)`,
+  `update__13gfSlowManagerFv` = `gfSlowManager::update()`) and, even for
+  unnamed functions, real addresses + sizes (`fn_XXXXXXXX`), which is
+  enough to confirm a hardcoded hex address actually lands inside a real
+  function boundary rather than nowhere.
+
+Wrote a small lookup script (`/tmp/.../scratchpad/symlookup.py` -
+session-local, not committed) and extracted every `lis`/`ori` address pair
+used in `Rollback_Hooks.cpp`'s raw asm (62 unique addresses). Cross-checked
+all of them: all land inside real function/object boundaries, nothing
+pointing at garbage. Also ran a structural check across the whole file for
+addresses reused across *different* hook functions (a classic copy-paste-
+bug signature) - found 3 cases, traced each one, and all 3 turned out to be
+legitimate shared retail re-entry points (multiple hooks converging back
+into the same original code path), not bugs - e.g. `beginningOfFrameLoop`'s
+natural continuation and `beginningOfFrameLoop2`'s one branch both correctly
+resume at the same address inside the same large ~1400-byte retail function
+(`fn_80016F8C`), which turns out to be heavily instrumented with many
+separate injection points threaded through it.
+
+**The actual find (commit `484c0a0`, high-confidence, disassembly-verified,
+not just read-and-guessed):** Several hook functions manually tear down
+their own compiler-generated stack frame before `bctr`-jumping into retail
+code (since `bctr` skips the compiler's normal `blr` epilogue at the end of
+the function, this has to be replicated by hand). Realized these hardcoded
+teardown offsets are only correct if they match what the compiler *actually*
+generated for that specific function's prologue - and that's independently
+verifiable, since I have the real build output. Disassembled the built
+`.elf` with `llvm-objdump -dr --no-show-raw-insn` (the `.o` files are LLVM
+bitcode, not usable directly; the linked `.elf` works) and compared every
+such block against its own function's real prologue.
+
+Found one mismatch: `setFrameAdvanceCounter`'s teardown used offsets
+`0x14`/`0xC`/pop-16 - but its real prologue (`stw 0,4(1)` /
+`stwu 1,-32(1)` / `stw 31,28(1)` / `stw 26,8(31)`) is a 32-byte frame,
+because this function's inline asm clobbers r26 (`:"3","26"`), forcing the
+compiler to treat r26 as live across the whole function and give it its
+own save slot - unlike every other function using this same teardown
+pattern, which only save LR+r31 in a 16-byte frame. The offsets used
+(`0x14`/`0xC`/16) are *exactly* what `beginningOfFrameLoop`'s real 16-byte
+frame needs (verified that one separately - it's correct) - strong
+evidence this was copied from there without adjusting for the extra saved
+register. Confirmed via grep that `setFrameAdvanceCounter` is the *only*
+function in the file whose inline asm clobbers a register in the r24-r31
+range this way, so this is very likely the only instance of this specific
+bug class here.
+
+Impact, concretely: every time this function ran while `Netplay::IsInMatch()`
+is true - i.e. during every active match, not a rare path - it restored LR
+from the wrong stack slot (loading garbage into the link register via
+`mtlr`), restored r31 from the wrong slot, never restored r26 at all
+(harmless only because r26 happens to never actually be written to
+anywhere in this function's body), and popped only half the real frame
+size, permanently leaking 16 bytes of stack on every call along this path.
+
+Fixed the offsets to the function's real frame layout and added the r26
+restore for consistency with the same function's other exit path. Then
+rebuilt and **re-disassembled the fix** to confirm it's now internally
+consistent with the real prologue (LR from `36(1)`, r31 from `28(1)`, r26
+from `8(31)`, frame popped by `32` - all exactly matching the real `stw`
+offsets) - not just "compiles," actually verified against the compiled
+frame layout. Documented the whole reasoning in a comment at the fix site
+so a future session doesn't need to re-derive the disassembly technique.
+
+**Still not live-tested** - this is arguably the single highest-priority
+item in this whole session to verify once real testing is possible, since
+it touches the link register on every in-match call. But unlike the #73/#75
+class of "needs Ghidra, can't safely guess" problems, this one was fixable
+with high confidence because the uncertainty was entirely about *this
+project's own compiled output*, which is directly inspectable with the
+build tools already in this environment - not about undocumented retail
+game internals.
+
+Checked the two other similar-looking manual-teardown blocks in the file
+(`BBBootTosqNetAnyOkiraku`, and the two blocks inside `beginningOfFrameLoop`
+itself) the same way - both confirmed correct, no further instances of this
+bug found. Left `forceFriendCode`'s `lwz 0, 0x00F8(29)` alone - that one's
+inside a genuinely `naked` function manipulating a caller-inherited frame
+(register 29-based, not this function's own compiler-generated one), which
+is a fundamentally different, real-retail-code question this technique
+can't answer without actual retail disassembly - out of scope, same as the
+rest of the raw-asm hooks.
+
 ## 2026-07-31 session (continued): swept the rest of `Brawlback-Online/source/`
 
 Read every remaining source file in `Brawlback-Online/source/` not yet
