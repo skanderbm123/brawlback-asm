@@ -14,6 +14,57 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-08-01 session (continued): pivoted to `brawlback-launcher` - found a real no-op filter bug in `loadGeckoCodes`
+
+The Dolphin fork's `Brawlback/` directory is now fully audited (every
+`.cpp`/`.h` in it read at least once across this and prior sessions, 3 real
+bugs found and fixed just this pass). Pivoted to `/workspace/brawlback-launcher`
+(branch `master`, 20 commits already ahead locally from earlier sessions -
+install pipeline, download logic, INI parsing, deep links, menu links, etc.
+- none of that touched this pass, still needs pushing once
+`Brawlback-Team/brawlback-launcher` gets forked).
+
+Checked `playkey.ts` first since it's the direct connective tissue to the
+`lylat.json` reading in `CEXIBrawlback::getUserInfo()` audited on the
+Dolphin side earlier this session - it already has detailed, accurate
+cross-referencing comments (matches the exact `getExeDirectory()`/
+`GetUserPath(D_USER_IDX)` logic verified in `EXIBrawlback.cpp`), confirming
+this file was already properly fixed/verified in an earlier pass. Not
+touched further.
+
+Found a new bug in `src/dolphin/config/geckoCode.ts`'s `loadGeckoCodes`:
+
+```ts
+const lines: string[] = ini.getLines("Gecko", false).filter((line) => {
+  return line.length !== 0 || line[0] !== "#";
+});
+```
+
+Intent is obviously to drop blank lines and `#`-prefixed comment lines
+before parsing the `[Gecko]` ini section into code blocks. `||` was used
+where `&&` was needed. Verified with a standalone `node -e` repro (not just
+reasoning about it) that `line.length !== 0 || line[0] !== "#"` evaluates to
+`true` for an empty string, a `"#comment"` line, and a normal line alike -
+because an empty string's `line[0]` is `undefined`, and `undefined !== "#"`
+is `true`, so the OR always finds a true operand no matter what. The filter
+callback can never return `false` - it's a complete no-op.
+
+Effect: blank lines and comment lines from the `[Gecko]` section were never
+actually being dropped. They fell through into the `lines.forEach` parsing
+loop's `switch (line[0])`, hit the `default:` branch (since only `$` and
+`*` are handled explicitly), and got pushed into `gcode.codeLines` for
+whatever gecko code entry was currently being built - an empty string entry
+for every blank line, and raw comment text mistaken for real gecko-code hex
+data for every `#` line. Both corrupt the parsed `codeLines` array for any
+code block in the ini that's followed by either, before those codes are
+ever re-serialized or otherwise used.
+
+**Fix** (commit `d463138` on `master`, NOT pushed yet - no fork exists for
+`Brawlback-Team/brawlback-launcher`): changed `||` to `&&`. `husky`'s
+pre-commit lint/format hooks passed cleanly; also ran `npx tsc --noEmit`
+across the whole project and confirmed no new type errors introduced by
+this file.
+
 ## 2026-08-01 session (continued): rest of `EXIBrawlback.cpp` threading/matchmaking/net-receive code + `Matchmaking.h` - no new findings
 
 Read through the remaining not-yet-explicitly-covered functions in
