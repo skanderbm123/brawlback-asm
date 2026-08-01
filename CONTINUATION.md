@@ -14,6 +14,122 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-08-01 session: confirmed off-by-one data-corruption bug in `RollbackSavestate` via standalone boost::icl test programs
+
+Continued auditing `incremental_rb.cpp` (the live `IncrementalRB` engine) with
+fresh eyes, specifically the non-`MULTITHREAD` (live) path of
+`RollbackSavestate()` which uses `boost::icl::interval_set<uintptr_t>` to
+compute `changedSet - excludeSet` and walk the resulting fragments to copy
+each fragment's "before" snapshot data back over live game memory.
+
+This function builds each tracked page's interval as
+`discrete_interval<uintptr_t>::closed(pageStart, pageStart + pageSize)` -
+deliberately one byte "too long" so that two adjacent tracked pages'
+intervals share exactly one point and get auto-merged by boost::icl into a
+single continuous run. After subtracting `excludeSet`, the code walks the
+resulting fragments and has two branches depending on whether the fragment's
+lower bound is "contained" (`boost::icl::contains(*it, it->lower())`):
+
+- **if-branch** (lower bound is real, unclipped data start): `orig_ptr =
+  it->lower()` directly, `size = it->upper() - it->lower()`, then had a
+  conditional `if (!contains(*it, it->upper())) size--;`.
+- **else-branch** (lower bound was clipped by excludeSet, i.e. `it->lower()`
+  is itself an excluded/boundary point): `orig_ptr = it->lower() + 1` (to
+  skip past the excluded point), `size = it->upper() - it->lower() - 1`,
+  then the same conditional extra decrement if the upper bound is also
+  clipped.
+
+I was suspicious the else-branch's `+1`/`-1` looked asymmetric against the
+if-branch's lack of any base adjustment, but reasoning abstractly about
+`boost::icl`'s dynamic-bounds semantics wasn't enough to be confident either
+way. Rather than guess, I wrote three small standalone C++ programs
+(`/tmp/.../scratchpad/icl_test{,2,3,4}.cpp`) that `#include` the actual vendored
+boost::icl headers from this repo (`Source/Core/Core/Brawlback/include/boost/icl/`)
+and compiled/ran them with plain `g++ -std=c++17` to empirically observe real
+`interval_set<uintptr_t>` behavior for:
+1. two adjacent closed-page intervals merging into one run (confirms the
+   merge trick works, and that `.upper()-.lower()` on the unclipped merged
+   run already equals the *correct* total byte count - `2 * pageSize` for a
+   2-page run, no further +1/-1 needed).
+2. a single isolated full page (confirms raw width == `pageSize` exactly,
+   unclipped).
+3. excluding a chunk from the middle of a single page (produces two
+   fragments; hand-verified the correct byte count for each against the
+   fragment boundaries and bound-containment flags).
+4. excluding a chunk near the end of a merged 2-page run (the case that
+   actually nails it down): the first (if-branch) fragment came back as
+   `[0x1000, 0x2900]`, `contains_lower=1`, `contains_upper=0`, raw width
+   `6400`. Hand-computed correct byte count for real data `[0x1000, 0x28FF]`
+   inclusive is `0x28FF - 0x1000 + 1 = 6400` - i.e. **the raw width is
+   already exactly correct, with no decrement needed**, even though
+   `contains_upper` is false and would trigger the old conditional
+   decrement.
+
+So the if-branch's `if (!contains(*it, it->upper())) size--;` was live,
+reachable, and simply **wrong** - it doesn't belong there at all (that
+decrement's rationale genuinely applies only to the else-branch, which
+already has its own separate `-1` baseline to compensate for the lower
+bound being clipped; the if-branch's lower bound needs no such compensation,
+so its raw width is already correct in every case I tested, both clipped and
+unclipped at the upper edge).
+
+**Effect of the bug**: every time `RollbackSavestate` had to restore a
+tracked-page run whose lower edge sits at a genuine already-tracked page
+boundary (the common case) *and* whose upper edge got clipped by
+`excludeSet` (e.g. adjacent to an excluded heap/stack region, or ending
+mid-page from any exclusion) - which is a realistic, non-contrived
+occurrence in real gameplay given the arena/heap exclusion ranges - the
+restore copied exactly one byte less than it should have. The very last byte
+of that fragment silently kept its post-rollback (i.e. wrong, "future")
+value instead of being restored to the correct pre-rollback historical
+value. This is a single stray byte per occurrence, which would manifest (if
+it manifests at all detectably) as sporadic, hard-to-reproduce desyncs
+between netplay peers with no obvious associated crash or log message -
+exactly the kind of bug that's very hard to find by symptom-chasing but
+straightforward to find by systematically re-deriving the actual space of
+addresses page-tracking is supposed to cover.
+
+**Fix** (commit `4d6d7d6` on `savestates-efficiency-v2`, NOT pushed - no
+fork exists yet for `Brawlback-Team/dolphin`): removed the erroneous
+conditional decrement from the if-branch entirely, leaving `size = it->upper()
+- it->lower()` unconditional there. Left the else-branch untouched (its
+decrement logic was independently confirmed correct via the same tests -
+scenario 3/4's second fragment, e.g. `[0x1600,0x2000)` with `raw=2560`,
+`size = 2560-1 = 2559` matching the hand-computed correct answer for that
+clipped-at-both-ends-of-original-page fragment exactly).
+
+This is now build-verified only insofar as the standalone test programs
+compiled and ran cleanly against the real vendored boost::icl headers (not
+the full Dolphin build, which remains impractical in this environment) -
+the actual code-path integration was re-read carefully post-edit to confirm
+no unintended change to control flow, variable scope, or the `ssData`/`size`
+computation surrounding it.
+
+The three previously-fixed bugs in this same file/area from an earlier
+session (arena leak in `Memmap.cpp`, off-by-one in `mem.cpp`'s
+`GetWrittenPages`, orphaned-allocation fix in `OnPagesWritten`) were
+re-confirmed intact and untouched by this pass - I re-read `OnPagesWritten`
+in full and its fix comment (lines 587-596) is still there verbatim.
+
+Also used this pass to re-verify `Rollback(s32 currentFrame, s32
+rollbackFrame)`'s index arithmetic (the commented-out asserts around it)
+by hand-tracing the worked example already in the file's own comments
+(frame 15 rolling back to frame 10) plus the single-frame-rollback edge
+case (rollback exactly 1 frame, the common case given `FRAME_DELAY=1`).
+Both check out as correct. In particular, the disabled `assert(...
+endingSavestateIdx != currentSavestateIdx)` at line 531 would actually have
+fired (incorrectly) on every ordinary single-frame rollback - that's
+*why* it's disabled, not evidence of a bug in the actual rollback logic,
+which I confirmed by hand-tracing produces the correct result (exactly one
+`RollbackSavestate` application) in that case. Not a new finding, just
+ruling out a lead so it doesn't get re-investigated later.
+
+Next: continue auditing remaining unread portions of the Dolphin fork
+(anything in `Brawlback/` or `HW/EXI/EXIBrawlback.*` not yet fully covered)
+and keep applying the same "don't trust it until you've empirically or
+concretely verified it" standard. Per the user's standing instruction, not
+stopping or asking whether to continue - moving straight to the next file.
+
 ## 2026-07-31 session (continued): a likely severe crash bug - thread reassignment on a 2nd match, not fixed (needs careful design, not a blind patch)
 
 Followed up on the thread-safety angle noted at the end of the previous
