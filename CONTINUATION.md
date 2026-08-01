@@ -14,6 +14,38 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-07-31 session (continued): finished EXIBrawlback.cpp - the rest is confirmed dead
+
+Read the remaining handlers: `handleDumpAll`, `handleAlloc`, `handleDealloc`,
+`handleFrameCounterLoc`, `handleStartReplaysStruct`, `handleReplaysStruct`,
+`handleEndOfReplay`. Before bug-hunting in them, checked reachability from
+the ASM side the same way as the earlier `NetReport`/`SkipDirectlyToCSS`
+checks: all four of `CMD_SEND_ALLOCS`/`CMD_SEND_DEALLOCS`/`CMD_SEND_DUMPALL`'s
+only ASM-side senders (`Match::alloc_gfMemoryPool_hook`/`free_gfMemoryPool_hook`/
+`allocGfMemoryPoolEndHook`/`dump_gfMemoryPool_hook`) are exactly the four
+hooks already confirmed commented-out in `brawlback-asm`'s `InstallHooks()`
+(the memory-heap-tracking hooks, `Match::dump_gfMemoryPool_hook` etc.) -
+and grepped `Rollback_Hooks.cpp` for any sender of `CMD_REPLAY_START_REPLAYS_STRUCT`/
+`CMD_REPLAY_REPLAYS_STRUCT`/`CMD_REPLAYS_REPLAYS_END` and found zero, not
+even commented out. So this entire back half of `EXIBrawlback.cpp` -
+`dynamicRegions` heap-allocation tracking (the pre-`IncrementalRB` approach)
+and the replay-recording pipeline (`curReplayJson`, `.brba` file writing) -
+is unreachable from either side of the wire. Confirms and extends the
+already-known "replay format/recording isn't wired up anywhere" finding
+from the launcher-side audit earlier this session, now from the Dolphin
+side too: there is genuinely no live replay-recording code path at all,
+not just an unimplemented launcher-side viewer.
+
+**`EXIBrawlback.cpp` is now fully covered** - every function either read
+and verified correct, or confirmed unreachable via the same
+grep-for-senders technique used successfully earlier in this session.
+
+Moving next to a thread-safety pass across the netplay/matchmaking/EXI
+threading (`NetplayThreadFunc`, `MatchmakeThread`, EXI DMA callbacks all
+run on different threads and share state like `gameSettings`/`numPlayers`)
+- a promising area given how concurrency-heavy this design is and how
+successful the static-analysis approach has been so far.
+
 ## 2026-07-31 session (continued): EXIBrawlback.cpp deep pass - one more real bug
 
 Started the promised full pass on `EXIBrawlback.cpp` (1544 lines - the
