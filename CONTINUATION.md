@@ -14,6 +14,29 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-08-01 session (continued): rest of `EXIBrawlback.cpp` threading/matchmaking/net-receive code + `Matchmaking.h` - no new findings
+
+Read through the remaining not-yet-explicitly-covered functions in
+`EXIBrawlback.cpp`: `ProcessFrameAck`, `ProcessGameSettings`,
+`ProcessNetReceive`, `NetplayThreadFunc`, `MatchmakingThreadFunc`,
+`connectToOpponent`, `handleFindMatch` (including the issue-#72
+direct-connect payload parsing I wrote earlier this engagement -
+`search.mode = payload[0]`, 18-byte Shift-JIS connect code at `payload[1..18]`,
+matches what `Rollback_Hooks.cpp`'s `setNextAnyOkirakuCaseFive` sends),
+`handleStartMatch`, `handleEndMatch` (the `lylat.gg/reports` CURL POST -
+all fields going into the JSON are numeric, no injection risk from
+untrusted string data), plus `Matchmaking.h`'s full class declaration.
+
+No new bugs found. Re-confirmed the already-documented thread-lifecycle
+risk is visible directly in `MatchmakingThreadFunc`'s loop (`while
+(this->matchmaking) { switch (state) { case CONNECTION_SUCCESS: break; ... }
+}` - once state reaches `CONNECTION_SUCCESS` this is a genuine tight
+busy-spin with no sleep/yield, burning a full CPU core until the match ends
+or matchmaking is torn down - consistent with, not a new addition to, the
+2026-07-31 writeup). Also noticed `Matchmaking.h`'s `int m_isSwapAttempt =
+false;` is write-only (one assignment in `Matchmaking.cpp` line 601, zero
+reads anywhere) - vestigial, not a bug, not touched.
+
 ## 2026-08-01 session (continued): `isPredicting` was a single shared scalar instead of per-player - breaks 3-4 player matches only
 
 Continued into `EXIBrawlback.h`/`.cpp` (re-reading with fresh eyes past
