@@ -14,6 +14,60 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-07-31 session (continued): pushed further into decompiled-source verification, hit the real coverage wall
+
+User asked to keep pushing into the Ghidra-gated territory anyway
+(best-effort). Went looking for more places where `doldecomp-brawl` has
+*actual* decompiled source (not just a name in `symbols.txt`) for code that
+Brawlback's hooks touch, the same way `gf_pad_queue.cpp` paid off earlier.
+
+**Found and cross-checked `src/sora/gf/gf_task.cpp`'s real `gfTask::process(ProcessType)`**
+against `gfTaskProcessHook`/`gfTaskProcessHook2` (installed at
+`0x8002dc74`/`0x8002dc78`, right at the top of this real function). The
+real code is `if (taskType < 8) { switch(...) 8 cases } else { switch(...)
+more cases }`. The hook's hand-written branch (`cmpwi task_type, 8` /
+`bge END_OF_LOOP`, jumping to `0x8002dc7c` when `<8` and `0x8002dd1c`
+when `>=8`) matches this exactly, and register assignment (`r3`→`task`
+object pointer, `r4`→`task_type`) matches the real member-function calling
+convention (`r3`=`this` for a member fn, `r4`=first real argument). **This
+is a genuine positive verification, not just "looks plausible" - confirmed
+correct against real decompiled logic**, unlike everything else in this
+file that's still assumption-based.
+
+**Also confirms `gf_pad_thread.cpp`'s real `gfPadReadThread::run()`** calls
+`g_gfPadSystem->updateLow()` from a dedicated periodic-alarm thread during
+normal (non-netplay) play - consistent with `fixPadInconsistency()`'s
+`if (!Netplay::IsInMatch()) g_gfPadSystem->updateLow();` gating: the real
+thread's automatic polling is deliberately left alone outside matches, and
+Brawlback's own EXI-driven injection path takes over during them. Makes
+architectural sense, no discrepancy found.
+
+**Hit the real limit of this technique.** Checked for decompiled source
+for `gfSceneManager` (touched by nearly every `NetMenu` hook -
+`ChangeGfSceneField`, `ChangeStruct3Scenes`, `BootToScMelee`, etc.),
+`ipSwitch`, `gfPadSystem` itself (not just its read-thread), and
+`muWifiInterfaceTask` - none exist as real source anywhere in
+`doldecomp-brawl`, only as names in the symbol table at best. The actual
+decompiled (non-stub) coverage in this decomp project is concentrated in
+stages (`mo_stage/st_*`) and a handful of low-level `gf` engine utility
+classes (`gfTask`, `gfPadStatusQueue`, `gfPadReadThread`,
+`gfSlowManager` - the last of these isn't even used by live Brawlback code)
+- it does not reach the menu/scene/CSS/matchmaking layer that essentially
+all of the remaining `NetMenu` namespace hooks live in. That's the
+overwhelming majority of what's left unverified in this file.
+
+**Where this leaves things:** the address-sanity, duplicate-address,
+stack-frame, and hook-type-consistency checks (all documented above) cover
+everything checkable without retail-code knowledge, and found 2 real bugs.
+The `gfTask`/`gfPadReadThread` cross-checks are icing - genuine positive
+verification where it was possible. Everything else in the raw-asm
+`NetMenu` hooks (the CSS/quickplay/matchmaking-menu bypass logic) is
+resting on the original author's own testing, not on anything checkable
+from this environment - there's no decompiled source, stub or otherwise
+meaningful, and no retail disassembly, for any of the scene-manager/CSS
+code those hooks touch. Further progress here genuinely needs either
+Ghidra access to the retail binary or a live test rig, not more reading.
+
 ## 2026-07-31 session (continued): a second real bug — wrong hook type for SkipDirectlyToCSS
 
 Continued the "slow and boring work" with a different, complementary
