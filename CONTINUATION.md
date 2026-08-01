@@ -14,6 +14,62 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-07-31 session (continued): EXIBrawlback.cpp deep pass - one more real bug
+
+Started the promised full pass on `EXIBrawlback.cpp` (1544 lines - the
+biggest single file in the Brawlback area, only partially covered by
+earlier sessions for specific things). Read through the constructor,
+`handleCaptureSavestate`/`handleLoadSavestate`, `handleLocalPadData`,
+`handleFrameDataRequest`, `getLocalInputs`/`getRemoteInputs`, `updateSync`,
+`shouldRollback`, `isRollbackMode`, `storeLocalInputs`, `handleSendInputs`,
+`ProcessIndividualRemoteFrameData`, `ProcessRemoteFrameData`,
+`GetLatestRemoteFrame`, `DMAWrite`/`DMARead`, `handleFrameAdvanceRequest`.
+
+**One real bug found and fixed (commit `a922d71` in the local Dolphin
+clone):** `storeLocalInputs` trimmed the local player's input queue with
+`if (size() > FRAMEDATA_MAX_QUEUE_SIZE) pop_front()` checked *before*
+pushing the new element, not after. When the queue was already exactly at
+the 15-element cap, that check was false (15 is not > 15), so nothing
+popped, and the push grew it to 16 - one over the intended max - every
+other call, oscillating between 15 and 16 instead of holding a hard cap.
+`ProcessIndividualRemoteFrameData`, elsewhere in the same file, handles the
+equivalent trim for each *remote* player's queue correctly (push first,
+then `while (size() > MAX) pop_front()` afterward) - changed
+`storeLocalInputs` to match that same convention for both correctness and
+internal consistency. Minor severity (off by one element in a 15-slot
+buffer) compared to the `TimeSync.cpp` bugs, but real and cheap to fix.
+
+**One near-miss, self-corrected before reporting:** `handleFrameDataRequest`
+has an inner `if (this->framesToAdvance == 0) { use blank inputs; continue; }`
+check inside a loop that's already gated by an outer `if (framesToAdvance != 0)`
+- looked like unreachable/dead code at first glance. Traced further before
+concluding that: `getRemoteInputs` (called earlier in the same loop
+iteration, for other player indices) can itself set
+`this->framesToAdvance = 0` as a side effect (its non-rollback/delay-based
+branch, when no remote frame data is available yet). So in a 3-4 player
+match, if an earlier remote player's call stalls the frame, the inner
+check correctly catches later remote players in the *same* loop pass. Not
+a bug - just needed tracing the actual side effects of a called function
+before jumping to "this looks redundant."
+
+**Everything else read in this pass is clean and correctly matches the
+rollback pseudocode comment it links to** (the `updateSync`/`shouldRollback`
+logic references
+`https://gist.github.com/rcmagic/f8d76bca32b5609e85ab156db38387e9` and
+follows it faithfully as far as can be checked without live-testing).
+
+Not build-verified (same reason as the `TimeSync.cpp` fixes - no practical
+full Dolphin build in this environment) but low syntactic risk (a `while`
+loop moved after an existing `push_back`, no new types or APIs).
+
+Remaining unread in `EXIBrawlback.cpp`: `handleDumpAll`/`handleAlloc`/
+`handleDealloc`/`handleFrameCounterLoc`/`handleReplaysStruct`/
+`handleStartReplaysStruct`/`handleEndOfReplay` (the replay/memory-dump
+tooling, lower priority - replays aren't even wired up on the launcher
+side yet per earlier findings), and `TransferByte`/`IsPresent` (already
+skimmed, trivial overrides). Next continuation point if picking this
+file back up.
+
 ## 2026-07-31 session (continued): swept the rest of the Dolphin fork's Brawlback/ directory
 
 Continued straight through per standing instruction (never suggest
