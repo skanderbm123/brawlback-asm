@@ -14,6 +14,55 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-08-01 session (continued): integer-division bug in `TimeSync.h`'s `MS_IN_FRAME`/`USEC_IN_FRAME`
+
+While reading the remaining unaudited headers (`incremental_rb.h`,
+`tiny_arena.h`, `Netplay.h`, `BrawlbackUtility.h` - all clean, nothing new;
+confirmed `Brawlback::Clamp(T input, T Max, T Min)` in `BrawlbackUtility.h`
+has zero call sites anywhere, unlike the differently-signatured, actually-used
+`::Clamp(T& value, const T& low, const T& high)` in `util.h` - dead code,
+not touched), found this in `TimeSync.h`:
+
+```cpp
+constexpr float MS_IN_FRAME = 1000 / 60;
+constexpr s32 USEC_IN_FRAME = MS_IN_FRAME * 1000;
+```
+
+`1000` and `60` are both `int` literals, so `1000 / 60` is evaluated as
+**integer division** (`= 16`) before the result is ever converted to
+`float` for the assignment - the fractional part (`.667`) is gone before
+`MS_IN_FRAME` even exists. This doesn't need empirical verification like the
+boost::icl finding above; it's unambiguous C++ operator/conversion
+semantics, provable by inspection alone. `USEC_IN_FRAME` then comes out to
+`16 * 1000 = 16000`, when the correct value (matching the actual ~59.94-60fps
+frame rate this whole netcode is built around) is `1000000 / 60 ≈ 16667`.
+That's a systematic **~4% low bias** baked into a compile-time constant used
+in two live spots in `TimeSync.cpp`:
+
+- line 70, `TimeSync::TimeSyncUpdate`: `this->framesToSkip = ((offsetUs -
+  TIMESYNC_MAX_US_OFFSET) / USEC_IN_FRAME) + 1;` - dividing by a
+  ~4%-too-small frame duration overestimates how many frames need to be
+  skipped to catch up, sometimes by a whole extra frame depending on the
+  offset magnitude (e.g. a real 160ms offset: correct math skips 9 frames,
+  buggy math skips 10).
+- line 157, `TimeSync::ProcessFrameAck`: `s64 frameDiffOffsetUs =
+  USEC_IN_FRAME * (timing.frame - frame);` - converts a frame-count
+  difference into a microsecond time offset for ack/ping tracking, with the
+  same ~4% low bias baked in every time.
+
+Neither of these individually crashes anything, but both feed the core
+time-sync pacing logic this whole rollback system depends on to decide when
+to stall/skip frames relative to the remote peer - a small systematic bias
+compounding across an entire match is exactly the kind of thing that would
+show up as "the netcode feels slightly off / drifts over a long match" in
+practice without an obvious root cause, unless someone happened to notice
+this one three-line constant.
+
+**Fix** (commit `5830a0b` on `savestates-efficiency-v2`, NOT pushed - no
+Dolphin fork exists yet): changed to `constexpr float MS_IN_FRAME = 1000.0f
+/ 60;`, forcing float division. `USEC_IN_FRAME` now correctly evaluates to
+`16666` (int-truncated from `16666.67f`).
+
 ## 2026-08-01 session: confirmed off-by-one data-corruption bug in `RollbackSavestate` via standalone boost::icl test programs
 
 Continued auditing `incremental_rb.cpp` (the live `IncrementalRB` engine) with
