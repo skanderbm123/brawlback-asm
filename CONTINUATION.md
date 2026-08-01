@@ -14,6 +14,70 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-07-31 session (continued): swept the rest of the Dolphin fork's Brawlback/ directory
+
+Continued straight through per standing instruction (never suggest
+stopping). After the `TimeSync.cpp` fixes, read every other file directly
+under `Source/Core/Core/Brawlback/` not yet covered this session:
+
+- **`Netplay.cpp`/`.h`** - packet construction/broadcasting. Clean, no
+  issues.
+- **`Matchmaking.cpp`** (766 lines) - read in full. `getMMHostForSearchMode()`
+  always calls `getMexMMHost()` (the "isMexMode" branch is commented out),
+  and both `MM_HOST_DEV` and `MM_HOST_PROD` are literally the same string
+  (`"lylat.gg"`) in `Matchmaking.h` - so this always resolves to the real,
+  correct backend regardless, but it does mean a user's
+  `m_slippiCustomMMServerURL` setting (a real, Slippi-inherited Dolphin
+  config option) is silently ignored if anyone ever tries to use it. Not
+  fixed - moot given there's only one real Brawlback matchmaking backend
+  right now, but worth knowing if custom-server support is ever wanted.
+  Cross-checked `m_localPlayerIndex` assignment/comparison logic against
+  Ishiiruka's `SlippiMatchmaking.cpp` - identical, confirmed correct.
+- **`BrawlbackUtility.cpp`** - clean. Re-confirmed (via fresh grep, not
+  just trusting the old note) that `isButtonPressed` (ignores its own
+  `button` parameter, always checks for Z) and `isPlayerFrameDataEqual`
+  are still both dead code with zero call sites - matches the
+  already-established finding from an earlier session, not newly
+  re-discovered by accident. Also found `Mem::isIntersect`/`removeInterval`/
+  `manipulate2` (custom interval-arithmetic for a `PreserveBlock` list) -
+  `isIntersect`'s formula only checks one direction of overlap, but its
+  only caller (`removeInterval`, also dead) always swaps operands first so
+  the one-directional check happens to be sufficient in that context
+  anyway. All three functions: zero call sites anywhere in the fork.
+- **`Savestate.cpp`** (`BrawlbackSavestate` class) and **`SlippiUtility.cpp`**
+  (entire file, including `SlippiInitBackupLocations` and the `Mem::`
+  byte-buffer helpers) - confirmed **zero call sites for any of it**,
+  anywhere. This is the dead pre-`IncrementalRB` savestate approach
+  mentioned in earlier sessions' notes - now confirmed exhaustively rather
+  than assumed.
+- **`include/incremental-rollback/tiny_arena.cpp`** - the actual bump
+  allocator backing the *live* `IncrementalRB` system. `arena_init`/
+  `arena_alloc`/`arena_clear` all correct. `arena_pop_latest` has a real
+  bug (compares against `arena->offset`, i.e. one-past-the-end of the most
+  recent allocation, where it should compare against `arena->prev_offset`,
+  the actual start address of that allocation) - but confirmed via grep
+  that `arena_pop_latest` itself has zero call sites anywhere, so this bug
+  is currently inert. Not fixed, noted for if this function ever gets used.
+
+**This completes a full audit of every file directly under
+`Source/Core/Core/Brawlback/`** in the Dolphin fork (excluding
+`include/incremental-rollback/incremental_rb.cpp`, `mem.cpp`, and
+`job_system.cpp`, which were already thoroughly covered in earlier
+sessions - the arena leak/off-by-one/orphaned-allocation fixes, and
+`job_system.cpp`'s confirmed-inert `MULTITHREAD`-gated worker threads).
+Net result this stretch: the two real `TimeSync.cpp` fixes above, and
+several additional "confirmed dead, matches or extends prior findings, not
+touched" landmines - no new live bugs found beyond `TimeSync.cpp`, but
+significantly higher confidence now that the *whole* directory has
+actually been read, not just the parts a previous session happened to
+already dig into for other reasons.
+
+Next: `EXIBrawlback.cpp`/`.h` (the biggest single file in this area,
+partially audited across earlier sessions for specific things -
+`ProcessGameSettings`, `handleFindMatch`, `handleStartMatch`,
+`handleEndMatch` - but not given a full line-by-line pass with the
+Ishiiruka-comparison technique that just found the `TimeSync.cpp` bugs).
+
 ## 2026-07-31 session (continued): the biggest bug this session, found in the Dolphin fork's TimeSync.cpp
 
 User said to never suggest stopping/holding, keep working straight through
