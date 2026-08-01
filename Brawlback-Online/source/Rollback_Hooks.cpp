@@ -2066,7 +2066,19 @@ namespace RollbackHooks {
         api->syInlineHookRel(0x000372A4, reinterpret_cast<void*>(NetMenu::BBSetupNetMelee), Modules::SORA_SCENE);
         api->sySimpleHookRel(0x0003770C, reinterpret_cast<void*>(NetMenu::ExitWifiCSSReturnsToDirectOrQuickplayScreen), Modules::SORA_SCENE);
         api->syInlineHookRel(0x00037708, reinterpret_cast<void*>(NetMenu::ExitWifiCSSReturnsToDirectOrQuickplayScreen2), Modules::SORA_SCENE);
-        api->sySimpleHookRel(0x0002E4F8, reinterpret_cast<void*>(NetMenu::SkipDirectlyToCSS), Modules::SORA_MENU_MAIN);
+        // sySimpleHookRel does NOT auto-return to the original code (per
+        // sy_core.h's own doc comment) - the hooked function has to
+        // manually resume execution itself. SkipDirectlyToCSS is a plain
+        // function with no such manual resume logic (no naked/bctr jump,
+        // unlike every other function actually installed via a Simple
+        // hook in this file) - it would just `blr` on return, jumping to
+        // whatever stale address happens to be in the link register
+        // instead of resuming the game. Its structurally-identical
+        // sibling right below, SkipDirectlyToTrainingRoom, is correctly
+        // installed via syInlineHookRel (which DOES auto-return) despite
+        // being the same shape of function - strong evidence this one
+        // should be the same hook type, not a SimpleHook.
+        api->syInlineHookRel(0x0002E4F8, reinterpret_cast<void*>(NetMenu::SkipDirectlyToCSS), Modules::SORA_MENU_MAIN);
         api->syInlineHookRel(0x00036DE8, reinterpret_cast<void*>(NetMenu::SkipDirectlyToTrainingRoom), Modules::SORA_SCENE);
         api->syInlineHookRel(0x00000814, reinterpret_cast<void*>(NetMenu::GetRulesFromCSSBoot), Modules::SORA_MENU_SEL_CHAR);
         api->syInlineHookRel(0x00000748, reinterpret_cast<void*>(NetMenu::SetRulesFromCSSBoot), Modules::SORA_MENU_SEL_CHAR);
