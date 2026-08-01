@@ -14,6 +14,91 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-07-31 session (continued): a likely severe crash bug - thread reassignment on a 2nd match, not fixed (needs careful design, not a blind patch)
+
+Followed up on the thread-safety angle noted at the end of the previous
+section. Found something that looks like a genuinely severe, well-reasoned
+crash risk, but is NOT fixed here - the fix needs multi-part thread-exit
+signaling I can't safely design and verify without building/live-testing,
+so this is written up in full instead of patched blind.
+
+**The setup:** `CEXIBrawlback` (`EXIBrawlback.h`) is a single, session-long
+object - confirmed earlier this session (constructed once in its own
+constructor, not per-match). It owns exactly one `std::thread netplay_thread`
+member and one `std::thread matchmaking_thread` member. Both get
+**re-assigned** (not constructed fresh) on every new matchmaking attempt:
+`this->matchmaking_thread = std::thread(&CEXIBrawlback::MatchmakingThreadFunc, this);`
+(in `handleFindMatch`) and `this->netplay_thread = std::thread(&CEXIBrawlback::NetplayThreadFunc, this);`
+(in `connectToOpponent()`, called from inside `MatchmakingThreadFunc`).
+
+**The problem:** per the C++ standard, `std::thread::operator=(std::thread&&)`
+calls `std::terminate()` (aborts the whole process) if the target already
+represents a joinable thread - and "joinable" just means "not yet `.join()`'d
+or `.detach()`'d", regardless of whether the underlying thread has already
+finished running. Grepped every `.join()`/`.detach()`/`.joinable()` call in
+this file: **`netplay_thread` is only ever joined in the destructor.**
+`matchmaking_thread` is joined in the destructor and in
+`handleCancelMatchmaking()` (an explicit user-cancel path) - but not
+anywhere on normal match completion.
+
+**Why this matters even though matches "work" today:** `MatchmakingThreadFunc`'s
+own loop (`while (this->matchmaking) { switch(state) { case CONNECTION_SUCCESS: break; ... } }`)
+has no sleep and no exit condition once it reaches `CONNECTION_SUCCESS` -
+it busy-spins on that state for the rest of the object's lifetime (i.e.
+the whole Dolphin session) unless `this->matchmaking` itself becomes null,
+which nothing does. `NetplayThreadFunc`'s loop only exits on an actual ENet
+disconnect event or a stalled connection - not on the game/match simply
+ending while the peer connection is still healthy. Neither Dolphin-side
+match-end logic (previously, nothing at all - `Netplay::EndMatch()` on the
+ASM side is purely local cleanup and sends nothing to Dolphin) resets
+these threads. **This means: if a player returns to the menu after a match
+and queues for a second match in the same Dolphin session, both
+`handleFindMatch`'s `matchmaking_thread` reassignment and (once matched)
+`connectToOpponent()`'s `netplay_thread` reassignment would very likely hit
+a still-joinable (often still-actively-running) thread object, triggering
+`std::terminate()` and crashing the entire Dolphin process.**
+
+This may well be currently unreachable in practice for a mundane reason:
+per the punch list at the top of this doc, the whole "return to CSS and
+requeue" menu flow is itself still WIP/prototype-stage (issue #72 and
+friends), so it's plausible nobody has actually been able to trigger a
+real second-match-in-one-session scenario yet to discover this crash. That
+would explain why this hasn't been reported as a known crash despite how
+severe and unconditional it looks in the code.
+
+**Why not fixed directly:** a correct fix needs to make BOTH threads
+actually exit their loops before the next match's reassignment happens,
+which means solving two different problems that interact:
+1. `NetplayThreadFunc` needs an explicit "please stop" signal decoupled
+   from actual ENet disconnection (e.g. a dedicated `shouldStop` flag
+   checked in its loop condition, set at match-end).
+2. `MatchmakingThreadFunc`'s infinite busy-spin in `CONNECTION_SUCCESS`
+   needs an actual exit condition (right now the only way out is
+   `this->matchmaking` becoming null, which nothing does and would need
+   its own careful handling given other code may depend on `matchmaking`
+   staying valid).
+3. Whatever join() gets added needs to run from a thread that isn't
+   `netplay_thread`/`matchmaking_thread` themselves (join-from-self is UB/
+   deadlock) - `handleEndMatch` (a `DMAWrite` handler, so it runs on the
+   CPU/EXI thread) is the natural place now that issue #76's fix earlier
+   this session means `CMD_MATCH_END` actually gets sent and `handleEndMatch`
+   actually gets called at the end of every match. But joining there
+   *before* the loops above have an actual exit condition would just
+   deadlock/freeze Dolphin instead of crashing it - arguably worse, since a
+   crash at least ends the freeze.
+
+Given the real risk of trading a "sometimes crashes on 2nd match" bug for
+a "sometimes silently freezes the game" bug if this is designed carelessly
+and can't be build/live-tested to confirm, this needs a deliberate design
+pass (ideally by someone who can actually run a two-match session and
+observe it), not a blind patch. Documented in full here so whoever picks
+it up doesn't need to re-derive any of this reasoning - the fix, in broad
+strokes, is: add a `shouldStop`-style flag both thread loops check, set it
+and signal both threads to wake up (`enet_host_service`/loop conditions)
+at the start of `handleEndMatch`, `join()` both *after* confirming they've
+actually exited, then proceed with the rest of `handleEndMatch`'s existing
+report-sending logic.
+
 ## 2026-07-31 session (continued): finished EXIBrawlback.cpp - the rest is confirmed dead
 
 Read the remaining handlers: `handleDumpAll`, `handleAlloc`, `handleDealloc`,
