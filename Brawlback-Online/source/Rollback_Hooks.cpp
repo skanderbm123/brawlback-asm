@@ -1235,10 +1235,35 @@ namespace FrameLogic {
             );
         }
         Utils::RestoreRegs();
+        // This hand-written block tears down this function's OWN
+        // compiler-generated stack frame before bctr-jumping into retail
+        // code (bctr doesn't go through the compiler's normal blr epilogue
+        // at the end of this function, so this has to replicate it by
+        // hand). The offsets/frame-size here (0x14/0xC/16, and no r26
+        // restore) were copied from beginningOfFrameLoop's equivalent
+        // block, but that function's real compiled prologue is a 16-byte
+        // frame saving only LR+r31 (stw 0,4(1) / stwu 1,-16(1) /
+        // stw 31,12(1)) - confirmed via llvm-objdump on the built .elf.
+        // setFrameAdvanceCounter's real prologue is different: it also
+        // has to save r26 (clobbered by the "3","26" constraint on the
+        // asm block above), giving stw 0,4(1) / stwu 1,-32(1) /
+        // stw 31,28(1) / stw 26,8(31) - a 32-byte frame, with LR actually
+        // saved at [sp+36] and r31 at [sp+28], not [sp+20]/[sp+12]. The
+        // un-adjusted copy-paste meant this read LR/r31 from the wrong
+        // stack slots and only popped half the real frame (permanently
+        // leaking 16 bytes of stack, and loading garbage into LR via
+        // mtlr) on every call where Netplay::IsInMatch() is true - i.e.
+        // during every active match. Fixed offsets to match the real
+        // compiled frame (re-verified via objdump after this change) and
+        // added the r26 restore for consistency with the same function's
+        // other exit path, even though r26 is never actually written to
+        // in this function's body so it was already holding the right
+        // value regardless.
         asm volatile(
-            "lwz 0, 0x0014 (1)\n\t"
-            "lwz 31, 0x000C (1)\n\t"
-            "addi 1, 1, 16\n\t"
+            "lwz 0, 0x0024 (1)\n\t"
+            "lwz 31, 0x001C (1)\n\t"
+            "lwz 26, 0x0008 (31)\n\t"
+            "addi 1, 1, 32\n\t"
             "mtlr 0\n\t"
             "lwz 3, 0x0030 (26)\n\t"
             "li 0, 0\n\t"
