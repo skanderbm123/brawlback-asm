@@ -14,6 +14,47 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-08-01 session (continued): more `brawlback-launcher` checks - `iniFile.ts`, `settingsManager.ts`, `verifyIso.ts`, `instance.ts` - no new bugs, one lead ruled out
+
+Followed up the `geckoCode.ts` fix by reading `iniFile.ts` in full (the
+`IniFile`/`Section` classes `geckoCode.ts` depends on). Confirmed `Section.getLines()`
+already unconditionally drops blank (trimmed-empty) lines regardless of the
+`removeComments` flag - meaning the blank-line half of the `geckoCode.ts`
+filter fix was harmless-redundant, and the `#`-comment half was the actual
+live bug, consistent with what was already fixed. `IniFile.save()`'s fix
+comment (lines 191-196, "A section can legitimately have both raw lines...")
+confirms that bug is intact from an earlier session. No new issues in this
+file.
+
+Checked a "confusing but not actually wrong" lead in `settingsManager.ts`:
+`deleteMod(id: number)` treats `id` as a raw array index
+(`modList.splice(id, 1)` gated by `id < modList.length`), which looked
+suspicious next to `deleteConsoleConnection`/`editConsoleConnection`'s
+proper `id`-field-based `findIndex` lookups. Checked `Mod`'s type
+definition (`settings/types.ts`) - it has no `id` field at all (unlike
+`StoredConnection`, which does); mods are genuinely referenced by array
+index everywhere, matching `AppSettings.settings.selectedMod`'s own comment
+("index of last played mod"). Traced the one real call site
+(`renderer/lib/hooks/useMods.ts` line 33) - passes `index` explicitly, named
+consistently all the way down. Not a bug, just a parameter that's misleadingly
+named `id` when it's really an index - ruled out.
+
+Read `verifyIso.ts` (MD5/SHA1 ISO hash verification against the known-good/
+known-bad hash tables) and `dolphin/instance.ts` (Dolphin process spawn
+wrapper) - both clean. Noted `verifyIso.ts`'s `stream.on("readable", ...)`
+handlers only call `.read()` once per event instead of looping until it
+returns null (the Node-recommended pattern) - a real anti-pattern, but
+this code is explicitly inherited from Slippi's original (working, shipped)
+implementation per its own comments, so treating it as new/actionable
+without a way to build and exercise the actual Electron app here would be
+guessing; left alone.
+
+The launcher's `src/` tree is ~200 files; this and the `geckoCode.ts` fix
+above cover a meaningful but partial slice of it (config/ini parsing,
+settings persistence, ISO verification, Dolphin process spawning). Plenty
+more surface remains (`broadcast/`, `console/` mirroring, `replays/`
+parsing, the whole `renderer/` React tree) for a future pass.
+
 ## 2026-08-01 session (continued): pivoted to `brawlback-launcher` - found a real no-op filter bug in `loadGeckoCodes`
 
 The Dolphin fork's `Brawlback/` directory is now fully audited (every
