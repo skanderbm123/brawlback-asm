@@ -14,6 +14,71 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-07-31 session (continued): the biggest bug this session, found in the Dolphin fork's TimeSync.cpp
+
+User said to never suggest stopping/holding, keep working straight through
+- redirected from the raw-asm coverage wall to auditing the Dolphin fork's
+C++ (`/workspace/brawlback-team-dolphin`), specifically `Netplay.cpp` and
+`TimeSync.cpp`, which hadn't had a deep pass yet. `Netplay.cpp` (packet
+construction/broadcasting) - read in full, clean, no issues.
+
+**`TimeSync.cpp` - found a real, significant bug, verified by direct
+comparison against the actual Slippi source it says it was ported from**
+(the file's own top comment: "pretty much all of this time sync stuff was
+taken from slippi"). `Ishiiruka` (Slippi's Dolphin fork, already in this
+workspace) has the equivalent logic in `Source/Core/Core/Slippi/SlippiNetplay.cpp`.
+
+1. **The circular buffer wraparound was broken** (commit `01a5731` in the
+   local Dolphin clone). `frameOffsetData[i].idx` (the write cursor for a
+   30-slot circular buffer of frame-timing-offset samples, used by
+   `calcTimeOffsetUs()`'s trimmed-mean to decide whether to skip a frame
+   for time sync) was advanced via
+   `(idx + 1) & ONLINE_LOCKSTEP_INTERVAL` - bitwise AND. `ONLINE_LOCKSTEP_INTERVAL`
+   is `30` (confirmed identical in both `brawlback-common/BrawlbackConstants.h`
+   and Ishiiruka's `SLIPPI_ONLINE_LOCKSTEP_INTERVAL`). A bitwise-AND mask
+   only correctly wraps an incrementing index when the interval is
+   `(power of 2) - 1` (e.g. 31, 15, 7) - 30 is not one of those. Checked
+   Ishiiruka's real line for the equivalent: `(frameOffsetData[pIdx].idx + 1) % SLIPPI_ONLINE_LOCKSTEP_INTERVAL`
+   - modulo, not AND. Verified computationally (ran the actual recurrence)
+   that `(idx + 1) & 30` collapses to a fixed point almost immediately
+   regardless of starting value, since bit 0 is always cleared by the mask
+   - meaning this "circular" buffer never actually rotated through its 30
+   slots after first filling up; most samples the time-sync average was
+   computed from went permanently stale. This is core, always-active
+   netcode logic (runs continuously during every match to decide
+   frame-skip timing), not an edge case - very plausibly a real
+   contributor to degraded sync quality in every match ever played on this
+   fork.
+2. **`TimeSync::startGame()` never reset `frameOffsetData` at all**, unlike
+   `lastFrameTimings`/`lastFrameAcked`/`ackTimers` right next to it in the
+   same loop. Traced where `TimeSync` itself gets constructed
+   (`CEXIBrawlback`'s own constructor, `this->timeSync = std::make_unique<TimeSync>();`,
+   confirmed via the `"BRAWLBACK exi ctor"` log line right above it - runs
+   once per Dolphin session, not per match) versus where `startGame()`
+   gets called (once per match) - confirming `startGame()` is the *only*
+   per-match reset point for this object, and it was missing this one
+   field. Checked Ishiiruka's equivalent per-connection init
+   (`SlippiNetplayClient`'s constructor) and confirmed it does reset
+   `frameOffsetData[i]` there. Without this, playing a second match in the
+   same Dolphin session would carry stale offset samples (and, after fix
+   1, a stale `idx`) over from the previous match. Fixed by adding
+   `this->frameOffsetData[i] = FrameOffsetData();` to the same loop.
+
+**Not build-verified** - a full Dolphin build isn't practical in this
+environment (huge codebase, no CMake config already set up, would need
+many system dependencies and a long build time on a 4-core box). Carefully
+re-read the diff for type/syntax correctness instead (`FrameOffsetData` is
+a plain aggregate struct with no user constructor, so
+`frameOffsetData[i] = FrameOffsetData();` is valid value-initialization +
+assignment - nothing exotic). **Not live-tested either.** Committed
+locally in `/workspace/brawlback-team-dolphin` same as the rest of this
+session's Dolphin-fork work - still blocked on the same "no fork exists
+yet" issue as everything else there. Given the "runs every frame of every
+match, directly ported from working Slippi code, and the divergence from
+the original is a single-character operator change" profile of this bug,
+this is probably the single most confidently-real bug found this entire
+session, even without a build/live-test to nail it down completely.
+
 ## 2026-07-31 session (continued): pushed further into decompiled-source verification, hit the real coverage wall
 
 User asked to keep pushing into the Ghidra-gated territory anyway
