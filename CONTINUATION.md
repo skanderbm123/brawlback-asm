@@ -14,6 +14,56 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-08-01 session (continued): `isPredicting` was a single shared scalar instead of per-player - breaks 3-4 player matches only
+
+Continued into `EXIBrawlback.h`/`.cpp` (re-reading with fresh eyes past
+what was already covered - the thread-reassignment bug documented in the
+previous 2026-07-31 section is still unfixed, still needs careful design,
+not touched this pass).
+
+Found: `bool isPredicting;` (`EXIBrawlback.h` line 126, no initializer) is
+written in `CEXIBrawlback::getRemoteInputs(bu32& locFrame, u8 playerIdx,
+bool& skipFrame)` - `isPredicting = false;` when real remote inputs were
+found for this player this frame, `isPredicting = true;` when falling back
+to predicted (repeated-previous) inputs for this player this frame - and
+read in `CEXIBrawlback::updateSync(bu32& locFrame, bu8 playerIdx)` to decide
+whether to run the predicted-vs-actual resync check for that player.
+
+The call structure: `getRemoteInputs` is called from the DMA frame-data-request
+handler in a loop over every non-local player index (`for (s32 i = 0; i <
+this->numPlayers; i++) { ... getRemoteInputs(currentFrame, i, ...); }`,
+around line 251), each call overwriting the single shared `isPredicting`.
+`updateSync` is called later from a *separate* DMA command
+(`handleUpdateSync`, its own loop over `i in 0..numPlayers`, line ~1403-1409).
+
+In a 2-player match this is harmless by coincidence - there's only ever one
+non-local remote player, so the single scalar really does describe "the"
+remote player's state. In a 3-4 player match (this game supports up to
+`MAX_NUM_PLAYERS`), `getRemoteInputs` runs for *multiple* remote players
+per frame before `updateSync` runs for any of them, so by the time
+`updateSync` executes for player 0, `isPredicting` has already been
+overwritten by whatever happened for player 1/2/3's `getRemoteInputs` call
+later in that same frame's loop. Every player's resync check ends up using
+the *last-processed* remote player's prediction state instead of its own -
+meaning the "did remote inputs match our prediction" logic that decides
+whether to actually roll back can silently use the wrong player's data,
+either skipping a needed rollback or triggering the resync-check logic
+using irrelevant data for everyone except whichever player happened to be
+last in the loop.
+
+**Fix** (commit `d9b2e3c` on `savestates-efficiency-v2`, NOT pushed):
+changed the declaration to `bool isPredicting[MAX_NUM_PLAYERS] = {};` and
+indexed all three usages by the already-in-scope `playerIdx` parameter at
+each site (both writes in `getRemoteInputs`, the one read in `updateSync`).
+Mechanical, low-risk change - `playerIdx` was already a parameter in both
+functions, and `predictedInputs.playerFrameDatas[playerIdx]` right next to
+the read site was already correctly indexed, just this one flag wasn't.
+
+This only matters for 3+ player matches - given the project's current focus
+is 1v1 ranked/unranked, this is lower urgency than the RollbackSavestate or
+TimeSync fixes above, but still a real, confirmed correctness bug worth
+having fixed before FFA/doubles rollback netplay is exercised.
+
 ## 2026-08-01 session (continued): integer-division bug in `TimeSync.h`'s `MS_IN_FRAME`/`USEC_IN_FRAME`
 
 While reading the remaining unaudited headers (`incremental_rb.h`,
