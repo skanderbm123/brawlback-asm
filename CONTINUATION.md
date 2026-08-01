@@ -14,6 +14,61 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-07-31 session (continued): a second real bug — wrong hook type for SkipDirectlyToCSS
+
+Continued the "slow and boring work" with a different, complementary
+technique: instead of verifying individual hook functions' internals,
+cross-referenced `InstallHooks()`'s ~70 hook-registration calls against
+`sy_core.h`'s own documented semantics for each hook type:
+
+- `syInlineHook`/`syInlineHookRel`: **auto-returns** to the original code
+  after the hook function returns normally.
+- `sySimpleHook`/`sySimpleHookRel`: explicitly **does NOT** auto-return -
+  the hooked function itself must manually resume execution (exactly why
+  `setFrameAdvanceCounter`/`beginningOfFrameLoop`/etc. hand-tear-down their
+  own stack frame and `bctr` into retail code, as covered above).
+- `syReplaceFunc`: function-level replacement with real call/return
+  semantics preserved (different mechanism entirely - confirmed this is
+  why `Utils::ReturnImmediately`, a bare `blr`, is correctly used with it
+  in three places to no-op some retail functions entirely).
+
+Wrote a script that, for every `InstallHooks()` entry, checked whether the
+target function is `naked`/contains a `bctr`-based manual resume, and
+flagged any hook-type/function-shape mismatch. Out of ~70 hooks, found
+exactly one: **`NetMenu::SkipDirectlyToCSS`** (commit `a581639`) was
+installed via `sySimpleHookRel` but is a completely plain function - no
+`naked`, no manual register save/restore, no `bctr` - just three field
+writes and a `render()` call before falling off the end into a normal
+compiler-generated `blr`. Per `sySimpleHook`'s own documented contract,
+that `blr` would return to whatever stale address happened to be in the
+link register rather than resuming the game's original code at the hook
+point - a real control-flow corruption bug, plausibly a hang or crash
+whenever this specific hook fires (the quickplay-CSS-skip path, given
+`onQuickplayMenus`/`Modules::SORA_MENU_MAIN`).
+
+The evidence for this being a copy-paste mistake rather than intentional:
+its immediate neighbor in both the function definitions *and* the
+`InstallHooks` call list, `SkipDirectlyToTrainingRoom`, is structurally
+identical (same shape - no naked, no manual resume) and correctly uses
+`syInlineHookRel`. Fixed by changing `SkipDirectlyToCSS`'s registration to
+`syInlineHookRel` to match. Build-verified. Not live-tested.
+
+Also worth noting for a future pass: `NetReport::netReportHook` through
+`netMinReportHook` (5 functions) are referenced in `InstallHooks` but every
+single one is commented out - so that whole namespace is entirely disabled/
+unused right now, consistent with the already-documented pattern of
+half-finished features in this codebase (like the #76 report code before
+this session's fix). Didn't investigate further since nothing calls into
+it either way.
+
+This closes out the systematic cross-referencing pass on `InstallHooks()`
+and the raw-asm hook functions - between the symbol-lookup address
+verification, the duplicate-address structural scan, the disassembly-
+verified stack frame fix, and this hook-type mismatch scan, this is about
+as thorough an audit as is possible without actual Ghidra access to the
+retail binary's logic itself (as opposed to just its address/symbol
+layout, which is what all of today's checks worked from).
+
 ## 2026-07-31 session (continued): the "slow and boring work" pass — a real stack-corruption bug, found via disassembly not guessing
 
 User explicitly asked to do the slow work on the raw-PowerPC-asm hooks I'd
