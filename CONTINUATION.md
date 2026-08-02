@@ -14,6 +14,70 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-08-01 session (continued): actually the bigger one - `GameSettings` received from the game was never endianness-swapped at all, corrupting the match's shared RNG seed
+
+Immediately following the `isInputsEqual` fix, kept using the now-initialized
+`brawlback-common` submodule to systematically check the OTHER shared wire
+structs' consumer code for the same "field silently missing from the
+handler" class of bug. Read `GameSettings.h`/`PlayerSettings.h`/
+`BrawlbackControls.h`/`PlayerType.h` in full to enumerate every field wider
+than 1 byte that would need an endianness swap crossing the PowerPC
+(big-endian) <-> x86 host (little-endian) boundary: `GameSettings.stageID`
+(`bu16`), `GameSettings.randomSeed` (`bu32`), and `PlayerSettings.nametag`
+(`bu16[NAMETAG_SIZE]`, confirmed 2-byte elements, not the 1-byte
+`displayName`/`connectCode` arrays right next to it). Everything else in
+these three structs (`PlayerType : bu8`, all of `BrawlbackControls`'s
+fields, `charID`/`charColor`/`colorFileIndex`/`controllerPort`/`rumble`) is
+single-byte and needs no swap.
+
+Then found the actual established convention by grepping both repos for
+every endianness-swap call site that already exists: this codebase
+consistently swaps each cross-endian EXI payload **exactly once, on
+receipt**, symmetric in both directions -
+`SwapPlayerFrameDataEndianness` (Dolphin receiving from the game, in
+`handleLocalPadData`), `Util::FixFrameDataEndianness` (game receiving from
+Dolphin, in `Rollback_Hooks.cpp`), `FixGameSettingsEndianness` (game
+receiving `GameSettings` back from Dolphin via `CMD_SETUP_PLAYERS`, in
+`CheckIsMatched`) - three confirmed instances of the same pattern. The
+fourth leg of this same square - Dolphin receiving `GameSettings` *from*
+the game via `CMD_START_MATCH` (`handleStartMatch`) - had no counterpart at
+all: `std::memcpy(&gameSettings, payload, sizeof(GameSettings));` with
+nothing after it. `fillOutGameSettings()` (`Rollback_Hooks.cpp`) populates
+the struct with raw native (big-endian) values and `CMD_START_MATCH` sends
+it as-is with no pre-swap either, confirming Dolphin's receiver was really
+the one missing its half of the pair.
+
+Traced the actual corruption: for the host,
+`ProcessGameSettings`'s `isHost` branch never reassigns
+`mergedGameSettings.randomSeed` - it round-trips game (0 swaps so far,
+correct big-endian bytes) -> `handleStartMatch` (0 swaps, the bug - should
+be 1) -> `CMD_SETUP_PLAYERS` -> the host's own game's
+`FixGameSettingsEndianness` (1 swap) = **1 total swap** on a value that
+needs an even count (0 or 2) to survive a round trip - an odd swap count
+byte-reverses the value. Since `randomSeed` seeds the match's shared RNG
+(read on the game side into `g_mtRandDefault.seed`/`g_mtRandOther.seed` per
+`MergeGameSettingsIntoGame`), this is a real, live desync risk from the
+very first frame of every hosted match (a byte-reversed seed is still
+*some* deterministic seed, so it wouldn't crash - it would just mean both
+players' RNGs could disagree if the seed isn't independently reconciled
+elsewhere, which nothing in the code otherwise does). `stageID` has a
+similar exposure via the opponent-echo path used for the non-host player's
+stage selection.
+
+**Fix** (commit `c1f91e0` on `savestates-efficiency-v2`, NOT pushed - no
+fork exists yet): added `SwapGameSettingsEndianness()` to
+`BrawlbackUtility.h`, swapping exactly the fields `FixGameSettingsEndianness`
+already handles on the game side (`stageID`, `randomSeed`, `nametag[]`),
+and called it in `handleStartMatch` right after the `memcpy`, matching the
+pattern every other receiver in this codebase already follows.
+
+This and the `isInputsEqual` fix above are, in my judgment, the two most
+consequential fixes of this entire session - both are live, run on every
+single match, and both were only found by actually reading the shared wire
+structs field-by-field against their consumers rather than reasoning about
+higher-level control flow, which is exactly what the newly-initialized
+submodule made possible.
+
 ## 2026-08-01 session (continued): the big one - `isInputsEqual` silently omitted LTrigger/RTrigger, letting real mispredictions skip the rollback that should've fixed them
 
 Found that the Dolphin fork's local clone here had never had its
