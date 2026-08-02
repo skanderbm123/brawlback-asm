@@ -14,6 +14,62 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-08-01 session (continued): found `/workspace/ssbb-decomp` has per-REL-module symbol tables - re-verified every `*Rel` hook address this session could previously only guess at
+
+Big discovery while chasing down the Stadium fix's remaining unverified
+piece: `/workspace/ssbb-decomp` (the user's own fork, `skanderbm123/ssbb-decomp`,
+upstream `doldecomp/brawl` - a more complete checkout than
+`/workspace/doldecomp-brawl`, 426 decompiled `.cpp` files vs. 187) has
+`config/RSBE01_02/rels/<module_name>/symbols.txt` for **every** REL module
+in the game, including exactly the ones Brawlback's `*Rel` hooks target:
+`st_stadium`, `sora_melee`, `sora_scene`, `sora_menu_main`,
+`sora_menu_sel_char`, `sora_menu_sel_stage`. Earlier this session I noted
+"no way to verify [REL-relative jump targets] further without a REL-specific
+symbol map I don't have access to" - that map exists, just not somewhere
+I'd looked yet.
+
+Wrote a small per-module symbol lookup (parses `name = .section:0xADDR;
+// type:T size:0xN` lines, section-aware) and re-checked ~30 `*Rel` hook
+addresses across all 6 of those modules against it. Two standout results:
+
+- **`stStadium::update`** (the Stadium fix's hook point,
+  `Modules::ST_STADIUM` offset `0x27A8`): the symbol at that *exact*
+  address in `st_stadium/symbols.txt` is `update__9stStadiumFf` - the
+  literal mangled name for `stStadium::update(float)`. This is stronger
+  confirmation than the decompiled-source match noted above: an actual
+  linker-derived symbol name confirming both the function's identity and
+  that the hook lands precisely on its entry point, not a guess or a
+  disassembly-inferred offset.
+- **`SkipDirectlyToCSS`** (`Modules::SORA_MENU_MAIN` offset `0x2E4F8` - the
+  hook whose *type* I fixed earlier this session, `sySimpleHookRel` ->
+  `syInlineHookRel`): confirmed the *address* is also correct - an exact
+  function-start match (`fn_2_2E4F8`, unnamed but a real, `0x29C`-byte
+  function boundary), not a random or mid-function offset. Extra
+  confidence on top of the earlier hook-type fix.
+
+**Caught and fixed a bug in my own verification script along the way**:
+my first pass parsed every symbol regardless of ELF section into one
+address-sorted list, which is wrong - `.text`, `.bss`, `.rodata`, `.data`
+etc. all have their own small offset numbering that can numerically
+overlap (e.g. `.text:0x8b78` and some unrelated `.bss:0x8b78` are
+completely different real addresses). This produced one false alarm
+(`fixEffects3` appeared to hook a `.bss` *object*, i.e. data, not code -
+which would've been a real, serious bug if true: patching a branch
+instruction into a data location and jumping to it). Filtering to
+`.text`-only before doing nearest-symbol lookup fixed it: `fixEffects3`
+correctly lands inside a real, 0x450-byte `.text` function. Worth noting
+as a methodology lesson - re-ran every other result from this pass through
+the corrected, section-aware version too, and all of them held up.
+
+All ~30 checked `*Rel` hooks land inside real `.text` functions in their
+respective modules (several as exact function-start matches, matching
+their `syInlineHookRel` auto-return semantics; others mid-function,
+matching their naked+manual-`bctr`-resume `sySimpleHookRel` counterparts).
+No new bugs, but this closes out essentially all remaining doubt about
+whether Brawlback's REL-relative hook table is patching the right
+addresses at all - a class of error none of today's other checks could
+have caught.
+
 ## 2026-08-01 session (continued): independently re-verified the actual "Stadium fix" this branch is named after - checks out exactly
 
 Given the branch name (`claude/brawlback-stadium-fix-y15twm`), gave
