@@ -14,6 +14,22 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-08-01 session (continued): verified both endianness-swap engines themselves are correct (not the source of the bugs above)
+
+Quick confirmatory check after the `isInputsEqual`/`GameSettings` findings:
+hand-verified all four `Utils::swapByteOrder` overloads in `utils.cpp`
+(`bu16`, `bu32`, `float`, `u64`) against worked numeric examples - the
+`bu16` shift-and-OR trick, the standard 2-stage bit-twiddling `bu32`
+swap (verified `0x12345678` -> `0x78563412`), the `float` pointer-cast
+reuse of the `bu32` algorithm, and the 3-stage `u64` mask/shift/OR
+extension - all correct, standard, well-known constructions. Also
+re-checked the Dolphin side's generic `swap_endian<T>` template
+(`BrawlbackUtility.h`) - a union-based raw-byte-array `std::reverse_copy`,
+correct for any POD size. Both swap engines check out; today's two big
+findings were genuinely missing/incomplete call sites (a function never
+calling any swap function, and a comparison never checking two of the
+fields), not bad math in the primitives themselves.
+
 ## 2026-08-01 session (continued): scripted an exhaustive hook-type-vs-function-shape sweep of `InstallHooks()` - no new bugs, high confidence in the rest of the table
 
 The `setFrameAdvanceCounter` (stack corruption) and `SkipDirectlyToCSS`
