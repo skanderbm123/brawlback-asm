@@ -14,6 +14,46 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-08-01 session (continued): real, build-verified, pushed fix on brawlback-asm itself - `EXIPacket::CreateAndSend` missing NULL check
+
+While re-verifying EXI packet framing (`exi_packet.cpp`) after the
+`GameSettings` endianness finding - wanted to make sure the actual wire
+framing itself (cmd byte + payload size) matched what Dolphin's `DMAWrite`
+parsing expects, which it does, cleanly, no bug there - noticed
+`EXIPacket::CreateAndSend(unsigned char EXICmd, void* source, unsigned int
+size)` calls `MemExpHooks::mallocExp(new_size)` and immediately
+`memmove`s into the result with **no NULL check**, unlike the two
+`EXIPacket` constructors right above it in the same file, which do check
+(that was itself an earlier-session fix - they used to log the wrong,
+not-yet-initialized `size` member instead of the actual attempted alloc
+size on failure, but they did always check for NULL).
+
+Checked reachability: `CreateAndSend` is called 16 times across
+`Rollback_Hooks.cpp` and is the **only** send mechanism actually used
+anywhere - grepped for direct `EXIPacket` construction (the
+constructor+`.Send()` API) and found zero real instantiation call sites,
+confirming that whole API is dead code (matches earlier findings about
+this file generally). Every live piece of EXI traffic - `CMD_ONLINE_INPUTS`
+every frame, `CMD_FRAMEDATA` every frame, `CMD_FRAMEADVANCE` every frame,
+`CMD_START_MATCH`, `CMD_FIND_OPPONENT`, etc - goes through this one
+un-checked function. `mallocExp` is a thin wrapper directly around the real
+`MEMAllocFromExpHeapEx` Revolution SDK allocator, which can and does return
+NULL under heap exhaustion/fragmentation - a real possibility over a long
+play session sharing the heap with normal Brawl gameplay allocations. A
+failure here would NULL-pointer-crash the whole game on the very next
+`memmove`, instead of gracefully dropping just that one packet the way the
+(unused) constructors already handle it.
+
+**Fix**: added the same null-check-and-log pattern the constructors use.
+**This is build-verified** (unlike everything else in this session's log,
+which is all on local, unpushed Dolphin-fork/launcher clones) - ran the
+real `python3 ./bbk.py setup && make` toolchain, links and outputs
+`Brawlback-Online.rel` cleanly with only pre-existing unrelated
+`__declspec` warnings. Committed as `8b98972` directly on
+`claude/brawlback-stadium-fix-y15twm` and already pushed (this is
+`brawlback-asm` itself, not a fork-in-waiting like the Dolphin/launcher
+work).
+
 ## 2026-08-01 session (continued): re-audited `GameLoop`/`GetInputsForFrame`/`getGamePadStatusInjection`/`setFrameAdvanceFromEmu` - no new bugs, one more dead-code lead ruled out
 
 Read through the core ASM-side simulation loop (`FrameAdvance::GameLoop`,
