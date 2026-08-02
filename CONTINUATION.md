@@ -14,6 +14,49 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-08-01 session (continued): scripted an exhaustive hook-type-vs-function-shape sweep of `InstallHooks()` - no new bugs, high confidence in the rest of the table
+
+The `setFrameAdvanceCounter` (stack corruption) and `SkipDirectlyToCSS`
+(wrong hook type) bugs from earlier this engagement were both found by
+manually cross-referencing a hook's registered type (`syInlineHook*` =
+auto-returns; `sySimpleHook*` = caller must manually resume via inline asm)
+against its target function's actual shape. Rather than keep sampling pairs
+by hand, wrote a small Python script (`/tmp/.../scratchpad`, not committed)
+that regex-extracts every `api->sy*Hook*(...)` call in `InstallHooks()`
+plus every function definition in the file, flags each function as
+"naked" (has `__attribute__((naked))`) or "plain", and reports any hook
+whose registered type doesn't match what its function's shape implies it
+needs (naked-with-manual-`bctr`-resume hooked via an auto-returning
+`syInlineHook*`, or a plain auto-returning function hooked via a
+manual-resume `sySimpleHook*`).
+
+Flagged 8 hits; all were already-accounted-for, not new bugs:
+- `connectToAnybodyAsyncHook`, `netReportHook`/`2`/`3`/`4`, `netMinReportHook`
+  - the regex doesn't understand `//` comments, and all 5 of these
+    registrations are commented out (confirmed dead already). False
+    positives from the script, not real findings.
+- `setFrameAdvanceCounter` - the already-fixed stack-corruption bug. Its
+  hook *type* (`sySimpleHook`) is actually correct - the function isn't
+  `__attribute__((naked))` but still does a manual inline-asm `bctr` resume
+  (my script's naked-detection only catches the attribute, not this
+  pattern), which is exactly why the earlier fix was about the teardown
+  *offsets* inside that inline asm, not the hook type itself.
+- `beginningOfFrameLoop` - same "plain-but-manually-resumes-via-inline-asm"
+  shape as `setFrameAdvanceCounter`. This is the *reference* case from the
+  earlier fix (`setFrameAdvanceCounter`'s bug was copying this function's
+  teardown offsets without adjusting for its own larger stack frame) - its
+  own teardown is for its own frame and is correct.
+- `BBBootTosqNetAnyOkiraku` - same shape again (plain function, manual
+  inline-asm `bctr` resume with its own hand-written stack teardown). This
+  was already independently checked and ruled out as a false lead in an
+  earlier session (its own teardown offsets are correct for its own frame,
+  by disassembly comparison, mentioned in the Errors and fixes history)
+
+No new hook-type-vs-shape bugs found. This gives high confidence the rest
+of the ~50-entry `InstallHooks()` table doesn't have more instances of the
+`SkipDirectlyToCSS` class of bug, without needing to hand-verify every
+remaining pair one at a time.
+
 ## 2026-08-01 session (continued): actually the bigger one - `GameSettings` received from the game was never endianness-swapped at all, corrupting the match's shared RNG seed
 
 Immediately following the `isInputsEqual` fix, kept using the now-initialized
