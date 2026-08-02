@@ -36,12 +36,61 @@ offset and the enum value, for the two components of this fix that are
 independently checkable against a real, size-asserted header (rather than
 just re-reading the same comment that was already in the file). The third
 component - that `m_event1` really sits at `+0x288` within `stStadium`
-itself - has no available header (`stStadium` isn't in either BrawlHeaders
-or doldecomp-brawl; only the smaller, unrelated rendering helper
-`grStadium` is), so that part remains unverified by header cross-reference,
-same as when the fix was presumably originally authored via live
-debugging. But the two parts that *are* independently checkable both
-confirm exactly. High confidence this fix is correct as committed.
+itself - had no available header in what I'd checked so far.
+
+**Then found it anyway**: `/workspace/ssbb-decomp` is the actual "brawl"
+decomp repo the original fix's writeup (way below, "What's been done: the
+Stadium transformation freeze fix") already cited by path
+(`src/mo_stage/st_stadium/st_stadium_update.cpp`) - it's present in this
+environment, just not somewhere I'd looked yet this session.
+`include/st_stadium/st_stadium.h` has the **exact real class**:
+
+```cpp
+class stStadium : public stMelee {
+public:
+    bool m_unk1d8;               // 0x1d8
+    grTenganEvent m_event0;       // 0x1dc
+    grTenganEvent m_event1;       // 0x288
+    ...
+};
+static_assert(sizeof(stStadium) == 0x7c4, "Class is wrong size!");
+```
+
+`m_event1` at `+0x288` - **exact match**, and this class also carries its
+own `static_assert`-pinned size. `st_stadium_update.cpp`'s actual
+`stStadium::update()` body is a word-for-word match for the control flow
+described in the original writeup (`if (m_event0.isReadyEnd()) { if
+(!m_event1.isEvent()) { ... m_event1.start(); ... } }`), and critically,
+line 69-70 (`m_event0.update(deltaFrame); m_event1.update(deltaFrame);`,
+unconditional, every call) **confirms** the original writeup's untested
+inference that `m_event0` needs no special handling once `m_event1` never
+starts - it just keeps ticking normally regardless.
+
+That leaves exactly one open item from the original writeup: *"Haven't
+verified `stStadium::update`'s calling convention preserves `r3` ... through
+Syringe's inline-hook trampoline."* Checked this too, directly in
+`lib/Syriinge/include/sy_core.h`'s `InlineHook` constructor - the
+trampoline's fixed instruction template is:
+
+```
+instructions[2] = 0xBC61000C;  // stmw r3, 0xC(r1)   <- saves r3..r31
+... (branch to hook) ...
+instructions[9] = 0xB861000C;  // lmw r3, 0xC(r1)    <- restores r3..r31
+```
+
+`stmw`/`lmw` (Store/Load Multiple Word) save and restore **every** GPR from
+r3 through r31 around the hook call, by definition of the instruction. This
+isn't circumstantial - it's the literal PowerPC encoding, decodable without
+needing to run anything. `r3` (the `this` pointer, per standard PPC calling
+convention) is provably preserved both *into* `FreezeStadiumTransform`
+(so `stStadiumSelf` is genuinely the right pointer) and *back out* to the
+resumed original code.
+
+**All four claims underlying this fix are now independently confirmed
+against real source** (three against decompiled game code, one against
+the hooking framework's own source) - as much confidence as static
+analysis can give without an actual Dolphin+ISO test run, which nobody in
+this fix's history (this session or the original one) has had access to.
 
 ## 2026-08-01 session (continued): symbol-cross-referenced ~25 absolute-address hooks against real doldecomp-brawl symbols - no bugs, strong confirmation the hooks target the right functions
 
