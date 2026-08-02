@@ -14,6 +14,41 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-08-01 session (continued): audited Brawlback's modifications to stock Dolphin files (not just the dedicated `Brawlback/` tree) - clean
+
+Grepped all of `Source/Core/Core/` for "Brawlback"/"BRAWLBACK" outside the
+dedicated `Brawlback/` directory and `HW/EXI/EXIBrawlback.*` to find every
+place Brawlback touched Dolphin's *own* pre-existing files - this is
+higher-risk territory than Brawlback's own new code, since a subtle
+regression here could affect other EXI devices/config, not just Brawlback
+itself. Found four: `HW/EXI/EXI_Device.h`/`.cpp` (registers the
+`EXIDeviceType::Brawlback` enum value and its `CEXIBrawlback` factory
+case), `Config/MainSettings.cpp` (`MAIN_SLOT_B`'s default device type),
+`ConfigManager.cpp` (default replay directory).
+
+All four are minimal and correct: the new enum value is appended last
+before the special `None = 0xFF` sentinel (no collision), the fmt
+formatter's `names` array has exactly 15 entries matching the 15
+non-`None` enum values in the same order (a classic bug spot - add an
+enum value without a matching formatter entry and every subsequent
+value's displayed name shifts by one; not the case here), the factory
+switch case has its own `break` (no fallthrough), and the
+`EnumFormatter<...::Brawlback>` template parameter (which bounds the
+formatter's valid range) was correctly updated to point at the new last
+value instead of the old one. `MAIN_SLOT_B`/`ConfigManager` changes are
+plain, uncontroversial default-value assignments. No bugs found in
+Brawlback's footprint inside stock Dolphin.
+
+Also spot-checked a handful of `InitState`'s hardcoded `ExcludeMem`
+addresses (Data/BSS/stack, PAD OSAlarm, etc.) against `RSBE01.lst` -
+`0x80009760` (the exclude range's start) matches a real exception-table
+symbol right at the start of static data, and `0x805bacc0` ("PAD OSAlarm")
+lands exactly on `g_PadSystem`'s own base address (consistent with an
+`OSAlarm` being a real, small leading member of that struct, not a
+red flag). The others land in expected "anonymous buffer, no nearby named
+symbol" gaps (Sound, CopyFB, RenderFifo) - normal for opaque allocated
+buffers, not something a symbol database would be expected to name.
+
 ## 2026-08-01 session (continued): traced and confirmed the live `GetPhysicalRegions` callback wiring - previously an unverified black box
 
 `incremental_rb.cpp`'s live `InitState` `#else` branch (the actual code
