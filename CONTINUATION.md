@@ -14,6 +14,26 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-08-01 session (continued): re-audited `GameLoop`/`GetInputsForFrame`/`getGamePadStatusInjection`/`setFrameAdvanceFromEmu` - no new bugs, one more dead-code lead ruled out
+
+Read through the core ASM-side simulation loop (`FrameAdvance::GameLoop`,
+`GetInputsForFrame`, `ProcessGameSimulationFrame`, `getGamePadStatusInjection`,
+`setFrameAdvanceFromEmu`, `FrameLogic::beginningOfMainGameLoop`) end to end.
+All consistent with the established swap-on-receive convention
+(`GetInputsForFrame` calls `Util::FixFrameDataEndianness` after reading from
+Dolphin; `setFrameAdvanceFromEmu` calls `Utils::swapByteOrder` after reading
+`framesToAdvance`). Re-confirmed `GameLoop` line 979's `>> 2 & 1 != 0` is the
+same already-ruled-out false alarm from an earlier session (`X & (1!=0)`
+reduces to `X & 1`, same truth value intended).
+
+Noticed `FrameLogic::ShouldSkipGfTaskProcess` uses `strstr(nonResimTasks,
+taskName)` (a hardcoded allowlist string as the haystack, the specific
+task's name as the needle) - this has a real substring-false-positive
+footgun (a task named e.g. "Effect" would match inside "EffectManager"),
+but grepping confirmed zero call sites anywhere in the file - dead code,
+consistent with this session's "verify reachability before reporting"
+standard. Not fixed, not worth it given it's unreachable.
+
 ## 2026-08-01 session (continued): verified both endianness-swap engines themselves are correct (not the source of the bugs above)
 
 Quick confirmatory check after the `isInputsEqual`/`GameSettings` findings:
