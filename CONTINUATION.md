@@ -14,6 +14,35 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-08-01 session (continued): independently re-verified the actual "Stadium fix" this branch is named after - checks out exactly
+
+Given the branch name (`claude/brawlback-stadium-fix-y15twm`), gave
+`StageFixes.cpp` (the file implementing that literal fix) a fresh,
+independent check with today's tools rather than trusting the earlier
+build/commit alone. The fix (`FreezeStadiumTransform`, hooked at
+`Modules::ST_STADIUM` offset `0x000027A8`) forces
+`*(u32*)(stStadiumSelf + 0x288 + 0xA4) = 1` - i.e. sets some object's
+`m_state` field to `1` at a computed offset, with an inline comment
+claiming `0x288` is `m_event1` (a `grTenganEvent`) within `stStadium`,
+`0xA4` is that class's own `m_state` field offset, and `1` is
+`grTenganEvent::Running`.
+
+Found `/home/user/brawlback-asm/lib/BrawlHeaders/Brawl/Include/gr/gr_tengan_event.h`
+- a real, curated header for exactly this class, with a
+`static_assert(sizeof(grTenganEvent) == 172, ...)` pinning its layout.
+It explicitly documents `State m_state; // +0xA4` and `enum State {
+NoEvent = 0, Running = 1, ReadyEnd = 2 }` - an **exact** match, both the
+offset and the enum value, for the two components of this fix that are
+independently checkable against a real, size-asserted header (rather than
+just re-reading the same comment that was already in the file). The third
+component - that `m_event1` really sits at `+0x288` within `stStadium`
+itself - has no available header (`stStadium` isn't in either BrawlHeaders
+or doldecomp-brawl; only the smaller, unrelated rendering helper
+`grStadium` is), so that part remains unverified by header cross-reference,
+same as when the fix was presumably originally authored via live
+debugging. But the two parts that *are* independently checkable both
+confirm exactly. High confidence this fix is correct as committed.
+
 ## 2026-08-01 session (continued): symbol-cross-referenced ~25 absolute-address hooks against real doldecomp-brawl symbols - no bugs, strong confirmation the hooks target the right functions
 
 Used `/tmp/.../scratchpad/symlookup.py` (from earlier this engagement) to
