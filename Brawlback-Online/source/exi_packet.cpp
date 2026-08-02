@@ -93,6 +93,15 @@ void EXIPacket::CreateAndSend(unsigned char EXICmd, void* source, unsigned int s
     // enough for the EXICmd byte + size of the packet
     unsigned int new_size = sizeof(EXICmd) + size;
     unsigned char* new_packet = (unsigned char*)MemExpHooks::mallocExp(new_size);
+    if (!new_packet) {
+        // CreateAndSend is the only actually-used send path (16 call sites,
+        // every frame's inputs/framedata/etc go through here) - unlike the
+        // constructors above, this had no null check, so a heap allocation
+        // failure here would NULL-deref on the memmove below instead of
+        // just dropping this one packet.
+        OSReport("Failed to alloc %u bytes! Heap space available: %u\n", new_size, MemExpHooks::getFreeSize(MemExpHooks::mainHeap, 4));
+        return;
+    }
 
     // copy EXICmd byte into packet
     memmove(new_packet, &EXICmd, sizeof(EXICmd));
