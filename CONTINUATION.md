@@ -14,6 +14,64 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-08-01 session (continued): the big one - `isInputsEqual` silently omitted LTrigger/RTrigger, letting real mispredictions skip the rollback that should've fixed them
+
+Found that the Dolphin fork's local clone here had never had its
+`brawlback-common` submodule initialized (`git submodule status` showed a
+leading `-` = uninitialized; the directory on disk was literally empty).
+The pinned commit (`33d728c8d047374e63ec94bfd9eb11061c1f7953`) matched the
+asm repo's submodule exactly though - so this was purely a local-clone gap,
+not a real drift between the two repos. Ran `git submodule update --init`
+to pull it, then `diff -rq`'d the two copies to confirm byte-for-byte
+identical. This unlocked directly reading the actual wire-format structs
+from the Dolphin side for the first time this session instead of only
+inferring them from usage.
+
+Read `BrawlbackPad.h`: 6 `bu32` button bitfields (`_buttons`, `buttons`,
+`holdButtons`, `rapidFireButtons`, `releasedButtons`, `newPressedButtons`)
++ 8 `bs8` analog fields (`LAnalogue`, `RAnalogue`, `LTrigger`, `RTrigger`,
+`stickX`, `stickY`, `cStickX`, `cStickY`) = 14 fields total. Cross-checked
+against `isInputsEqual()` in `BrawlbackUtility.h` (already read earlier
+this session, but not scrutinized field-by-field against the real struct
+until now) - it only compares 12 of the 14: `LTrigger`/`RTrigger` are
+silently missing from the `triggers` bool.
+
+Verified `LTrigger`/`RTrigger` are real, independent input state, not
+redundant with `LAnalogue`/`RAnalogue` - grepped `Rollback_Hooks.cpp`
+(brawlback-asm) and confirmed they're captured from the real controller's
+`_0x36`/`_0x37` bytes (distinct memory locations from
+`m_lTriggerAnalog`/`m_rTriggerAnalog`, which feed `LAnalogue`/`RAnalogue`)
+and written back into the live game pad struct on input injection
+(`gamePad->_0x36 = pad.LTrigger;`) - so these fields can genuinely vary
+independently of the analog trigger values and do affect real gameplay.
+
+**Why this matters more than the other findings today**: `isInputsEqual`
+is called from `CEXIBrawlback::updateSync()` (`EXIBrawlback.cpp:329`) -
+this is the actual predicted-vs-actual resync check, the thing that decides
+whether a rollback needs to happen at all. `updateSync` walks each
+just-confirmed remote frame and calls `isInputsEqual(remoteInputs.pad,
+predictedInputs.pad)` to see if the prediction the game already simulated
+matches what the remote player actually did; a mismatch is what triggers
+`IncrementalRB::Rollback(...)` and resimulation. Because `LTrigger`/`RTrigger`
+were never compared, a misprediction limited to *just* those two fields
+(remote player's L/R trigger digital state predicted wrong, everything else
+right) would be silently reported as "inputs match, no rollback needed" -
+the exact scenario rollback netcode exists to catch and correct, quietly
+passing through uncorrected. This is a much higher-severity class of bug
+than the other three fixes today (which affect timing precision, one byte
+of restored memory, or only 3-4 player matches) since it's a direct hole in
+the core correctness guarantee of the rollback system itself, live in every
+single match regardless of player count.
+
+**Fix** (commit `10219cd` on `savestates-efficiency-v2`, NOT pushed - no
+fork exists yet): added `p1.LTrigger == p2.LTrigger && p1.RTrigger ==
+p2.RTrigger` to `isInputsEqual`'s `triggers` bool in `BrawlbackUtility.h`.
+Also fixed the same omission in `Match::isPlayerFrameDataEqual`
+(`BrawlbackUtility.cpp`) - a near-identical but confirmed-dead-code
+duplicate (the "TODO: this code is duplicated on the .cpp make it dry"
+comment right above the live version was the tell) - for consistency in
+case it's ever wired up.
+
 ## 2026-08-01 session (continued): more `brawlback-launcher` checks - `iniFile.ts`, `settingsManager.ts`, `verifyIso.ts`, `instance.ts` - no new bugs, one lead ruled out
 
 Followed up the `geckoCode.ts` fix by reading `iniFile.ts` in full (the
