@@ -14,6 +14,41 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-08-01 session (continued): fixed a real, live logging bug - `ProcessFrameAck`'s ERROR log fires constantly (and incorrectly) in any 3-4 player match
+
+Traced `BroadcastFramedataAck` (`EXIBrawlback.cpp:590`) back to its caller
+in `ProcessRemoteFrameData`: `playerIdx` passed to it is
+`mostRecentFramedata->playerIdx` - the *original sender's* own player
+index, not the local receiver's. That's the correct design for
+identifying "this ack is about player X's framedata" - but
+`BroadcastFramedataAck` sends it via `netplay->BroadcastPacket(...)`,
+which goes through `BrawlbackNetplay::BroadcastPacket` ->
+`enet_host_broadcast` - a genuine broadcast to *every* connected peer, not
+a point-to-point send back to the original sender only.
+
+In a 1v1 match there's exactly one other peer, so this never surfaces: the
+one peer who receives the ack is always the one it's about.
+In a 3-4 player match, every peer receives every other peer's acks too -
+e.g. player C's ack (for player A's framedata) gets delivered to B and D
+as well, who have no use for it. `ProcessFrameAck`
+(`EXIBrawlback.cpp:720`) checks `frameAck->playerIdx != this->localPlayerIdx`
+before acting on an ack - correct gating logic - but logged
+`ERROR_LOG_FMT(BRAWLBACK, "FrameAck playeridx is not local player idx! (This
+is wrong...)")` on the "not for me" branch. That branch is *routine*,
+*expected* traffic in any >2 player match (every peer hits it for every
+ack not about their own framedata), not an error - left as-is, this would
+flood error-level logs constantly in any FFA/doubles match, burying real
+problems, and its own wording ("This is wrong...") actively misleads
+whoever's debugging based on the logs into thinking something's broken.
+
+**Fix** (commit `715e651` on `savestates-efficiency-v2`, NOT pushed - no
+fork exists yet): downgraded to `INFO_LOG_FMT` with accurate wording
+("Ignoring FrameAck for player N (not us)"), plus a comment explaining the
+broadcast-fan-out reasoning so nobody re-introduces the alarming framing
+later. Purely a logging/observability fix - the actual gating logic
+(`if/else` routing to `this->timeSync->ProcessFrameAck`) was already
+correct and untouched.
+
 ## 2026-08-01 session (continued): re-verified `TimeSync::calcTimeOffsetUs`/`ProcessFrameAck`, found a dead-code protocol mismatch in `Netplay.cpp`
 
 Hand-traced `TimeSync::calcTimeOffsetUs`'s trimmed-mean (sort each player's
