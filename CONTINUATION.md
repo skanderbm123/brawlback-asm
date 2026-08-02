@@ -14,6 +14,38 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-08-01 session (continued): re-verified `TimeSync::calcTimeOffsetUs`/`ProcessFrameAck`, found a dead-code protocol mismatch in `Netplay.cpp`
+
+Hand-traced `TimeSync::calcTimeOffsetUs`'s trimmed-mean (sort each player's
+offset buffer, discard bottom/top third via `(int)((1/3)*bufSize)`,
+average the middle) through several buffer sizes (1, 2, 3, 4, 30) - all
+correct, including the small-buffer edge cases (integer truncation makes
+the "trim" a no-op below size 3, which is the right degenerate behavior,
+not a bug). The `if (count <= 0) return 0;` guard is provably unreachable
+(count = bufSize - 2*floor(bufSize/3) is always > 0 for bufSize >= 1) but
+harmless. Also confirmed `ReceivedRemoteFramedata`'s `frameDiffOffsetUs =
+USEC_IN_FRAME * (timing.frame - frame)` now benefits directly from today's
+earlier `MS_IN_FRAME`/`USEC_IN_FRAME` fix - this is the actual call site
+whose precision that fix improves.
+
+While re-reading `Netplay.cpp` fresh, found `BroadcastPlayerFrameData`
+(singular - sends `[CMD_FRAME_DATA][raw PlayerFrameData]`, no count byte)
+doesn't match what `ProcessNetReceive`'s `CMD_FRAME_DATA` handler always
+expects (`u8 numFramedatas = data[0]; PlayerFrameData* framedata =
+(PlayerFrameData*)&data[1];` - always reads a count byte first). Sending
+via this function would have the receiver misinterpret
+`PlayerFrameData::randomSeed`'s first byte as a framedata count and parse
+complete garbage from there. Checked reachability: zero call sites for
+`BroadcastPlayerFrameData` anywhere - only `BroadcastPlayerFrameDataWithPastFrames`
+(which correctly includes the count byte) is ever actually called, from
+`EXIBrawlback.cpp:561`. Dead code, not a live bug, but a genuine
+near-miss - if anyone ever "simplified" the single-framedata case back to
+calling this function without noticing the missing count byte, it would
+break every packet. Noting it rather than fixing an unreachable function,
+consistent with this session's standing "don't patch what nothing calls"
+practice, but flagging it since it's the kind of trap worth deleting
+outright in a future cleanup pass rather than leaving armed.
+
 ## 2026-08-01 session (continued): audited Brawlback's modifications to stock Dolphin files (not just the dedicated `Brawlback/` tree) - clean
 
 Grepped all of `Source/Core/Core/` for "Brawlback"/"BRAWLBACK" outside the
