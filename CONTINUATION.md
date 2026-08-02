@@ -14,6 +14,64 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-08-01 session (continued): found a real, structural 3-4-player-only bug in ack tracking - documented, NOT blindly fixed (needs a real redesign, not a line patch)
+
+Following the `ProcessFrameAck` broadcast-fan-out finding above, dug into
+what `lastFrameAcked`/`ackTimers` (`TimeSync.h`) actually track, since
+`getMinAckFrame` (used by `handleSendInputs` to decide which of our own
+old local inputs are safe to stop sending, because everyone's confirmed
+receipt) is named like it should take a true minimum across remote peers.
+
+`lastFrameAcked` and `ackTimers` are both indexed `[MAX_NUM_PLAYERS]`, but
+by *subject* (whose framedata is being acked), not by *which remote peer
+sent this specific ack*. Given the broadcast-fan-out fact established
+above - the ack's `playerIdx` is always the acked-framedata's original
+sender, and (per `CEXIBrawlback::ProcessFrameAck`'s upstream filter) that
+always equals `this->localPlayerIdx` by the time it reaches
+`TimeSync::ProcessFrameAck` - **every remote peer's ack about my own
+inputs lands in the exact same slot**: `lastFrameAcked[this->localPlayerIdx]`.
+
+In a 1v1 match this is harmless - there's only one remote peer, so
+"whichever ack arrived" and "the one peer's ack" are the same thing. In a
+3-4 player match, each of the 2-3 other remote peers independently acks my
+inputs, and `ProcessFrameAck`'s `this->lastFrameAcked[localPlayerIdx] =
+frame > lastAcked ? frame : lastAcked;` is a plain running max across
+*all* of them combined into one shared slot - so if peer 1 (fast
+connection) has acked through frame 100 but peer 2 (slow connection) has
+only acked through frame 50, this reports 100, not the true minimum (50)
+across peers. `getMinAckFrame`'s "minimum" is real only across *subject
+indices* (which, again, in a 3-4 player match, are mostly permanently 0
+for indices other than my own - since nothing ever writes
+`lastFrameAcked[remotePeerIdx]` for an index that isn't mine), not across
+the actual distinct peers sending those acks.
+
+**Concrete consequence**: `handleSendInputs`'s own comment states its
+purpose plainly - "we send *all* unacked inputs so that when the remote
+client doesn't receive inputs, and needs to rollback the next packet will
+have all the inputs that that client hasn't received." If
+`getMinAckFrame()` over-reports (thinks frame 100 is acked by everyone
+when only the fast peer has, and the slow peer is still at 50), old
+frames 51-100 stop being included in future outgoing packets *before* the
+slow peer has actually confirmed receiving them - if that peer's own
+local copy of those frames was ever lost (packet drop, since acks/framedata
+travel over `ENET_PACKET_FLAG_UNSEQUENCED`/similar unreliable channels),
+there's no path left to resend them. `ackTimers`'s ping/RTT bookkeeping has
+the same conflation problem for the same reason.
+
+**Why not fixed this session**: this needs a real per-remote-peer index
+(`lastFrameAcked[MAX_NUM_PLAYERS][MAX_NUM_PLAYERS]` or similar, keyed by
+[which peer sent this ack][whose framedata it's about], with
+`getMinAckFrame` changed to take a genuine min across the *senders* who
+matter) rather than a one-line patch - the current single-slot-per-subject
+layout is baked into `FrameOffsetData`/`ackTimers`/`lastFrameAcked` all
+being sized `[MAX_NUM_PLAYERS]` uniformly, and reworking it risks the same
+"could silently trade one bug for a worse one" risk already flagged for
+the 2026-07-31 thread-lifecycle finding. Given this project's current
+focus is 1v1 (where this is provably harmless), this is real but lower
+urgency than anything actually fixed this session - documenting clearly so
+whoever tackles 3-4 player support next has the actual mechanism already
+identified rather than having to re-derive it from symptoms.
+
 ## 2026-08-01 session (continued): fixed a real, live logging bug - `ProcessFrameAck`'s ERROR log fires constantly (and incorrectly) in any 3-4 player match
 
 Traced `BroadcastFramedataAck` (`EXIBrawlback.cpp:590`) back to its caller
