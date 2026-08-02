@@ -14,6 +14,29 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-08-01 session (continued): confirmed brawlback-asm's own source tree is fully covered; two more vestigial headers noted
+
+Listed every `.cpp`/`.h` in `brawlback-asm` outside vendored dependencies
+(`lib/BrawlHeaders`, `lib/brawlback-common`, `lib/Syriinge`, the vendored
+LLVM toolchain under `tools/`) - confirms the project's own source is
+exactly the set of files already covered this session and in prior ones:
+`Brawlback-Online/source/*.cpp` and their headers.
+
+Noticed two headers with zero implementation and zero call sites anywhere:
+`Research_Hooks.h` (declares a `Research::` namespace with
+`dump_gfMemoryPool_hook`/`alloc_gfMemoryPool_hook`/etc. - note the
+*different* namespace from the actually-referenced-but-commented-out
+`Match::dump_gfMemoryPool_hook` etc. in `Rollback_Hooks.cpp`'s
+`InstallHooks()`, confirming these are unrelated, never-implemented
+declarations, not just another reference to the already-documented dead
+heap-tracking pipeline) and `test_hooks.h` (`TestHooks::InstallHooks()`).
+Grepped all of `source/*.cpp` for both namespaces - no matches anywhere.
+Fully vestigial, orphaned headers; not worth touching.
+
+This closes out `brawlback-asm`'s own source tree as fully read and
+audited this engagement (every fix this session on this repo -
+`EXIPacket::CreateAndSend`'s NULL check - is already committed and pushed).
+
 ## 2026-08-01 session (continued): found `/workspace/ssbb-decomp` has per-REL-module symbol tables - re-verified every `*Rel` hook address this session could previously only guess at
 
 Big discovery while chasing down the Stadium fix's remaining unverified
