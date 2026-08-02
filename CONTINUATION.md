@@ -14,6 +14,39 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-08-01 session (continued): traced and confirmed the live `GetPhysicalRegions` callback wiring - previously an unverified black box
+
+`incremental_rb.cpp`'s live `InitState` `#else` branch (the actual code
+path, given `MULTITHREAD`/`SPECIFIC_TRACKING`/`HEAPS` are all confirmed
+undefined) calls `cbs.getPhysicalRegions()` to discover which memory
+regions to `TrackAlloc` for dirty-page rollback tracking - this callback
+had never been traced to its actual implementation this session. Grepped
+`EXIBrawlback.cpp` first (nothing - wrong file) then found the real wiring
+in `Memmap.cpp`: `MemoryManager::Init()` populates a 4-slot
+`m_physical_regions` array (`[0]` RAM always-active, `[1]` L1 cache
+always-active, `[2]` fake-VMEM only for non-Wii/non-MMU GameCube mode,
+`[3]` EXRAM only when `wii=true`) *before* calling `IncrementalRB::InitState(cbs)`
+later in the same function - so by the time the callback fires, `.active`
+flags are already correctly set. For Brawl (a real Wii title), that
+resolves to RAM + L1 cache + EXRAM tracked, fake-VMEM correctly excluded.
+The callback chain itself (`IncrementalRB::GetPhysicalRegionsCb` ->
+`cbs.getPhysicalRegions` -> free function `getPhysicalRegions()` in
+`Memmap.cpp` -> `MemoryManager::GetPhysicalRegions()`, a simple reference
+accessor `{ return m_physical_regions; }`) is a clean, correct, fully-traced
+pipeline. No bug; this closes out a previously-unverified piece of the live
+tracking setup.
+
+While in there, spot-checked `getGameMemFrame()`'s hardcoded
+`0x901812b4` against `RSBE01.lst`'s `g_GameFrame` entry
+(`0x901812A0`) - confirms it's `g_GameFrame + 0x14`, a real object base
+plus a plausible field offset (matches `updateFrameCounter`'s
+`g_GameFrame.persistentFrameCounter` reference in `Rollback_Hooks.cpp` -
+same struct, presumably that field, though neither `doldecomp-brawl` nor
+the more complete `ssbb-decomp` has `GameFrame`'s member layout decompiled
+yet to confirm the exact field). Not contradictory, but not fully closed
+either - noting the boundary of what's currently verifiable via source
+rather than treating "plausible" as "proven."
+
 ## 2026-08-01 session (continued): confirmed brawlback-asm's own source tree is fully covered; two more vestigial headers noted
 
 Listed every `.cpp`/`.h` in `brawlback-asm` outside vendored dependencies
