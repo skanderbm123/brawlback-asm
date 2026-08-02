@@ -14,6 +14,56 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-08-01 session (continued): symbol-cross-referenced ~25 absolute-address hooks against real doldecomp-brawl symbols - no bugs, strong confirmation the hooks target the right functions
+
+Used `/tmp/.../scratchpad/symlookup.py` (from earlier this engagement) to
+look up every absolute-address (non-`*Rel`) hook in `InstallHooks()`
+against both symbol databases. Wrote a small Python regex extractor to
+list every `(address, hookType, function)` tuple straight from the source
+rather than transcribing by hand.
+
+Found strong, specific corroboration that hooks land on exactly the
+functions their names claim to intercept - e.g. `Match::setRandSeed` hits
+`generate__6mtRandFv` (mtRand's `generate()`) exactly at its start;
+`FrameAdvance::updateLowHook` hits `updateLow__11gfPadSystemFv`;
+`FrameLogic::gfTaskProcessHook`/`2` hit `process__6gfTaskFQ26gfTask11ProcessType`
+exactly at its start and +4; `FrameLogic::fixEffects5`/`6` land inside
+`setSkipLowEffect__FPvUi` (literally an "effect" function);
+`NetMenu::setFixStaleInputsTrue` lands inside `updateLowGC__11gfPadSystemFP11gfPadStatus`.
+Also noticed the whole `beginningOfMainGameLoop`/`moveUpdateSystem`/
+`setFrameAdvanceCounter`/`fixEffects4`/`beginningOfFrameLoop` hook family
+all land at ascending offsets (0x0, 0x18, 0xf8, 0x10c, 0x19c) inside one
+real function, `startOfGameLoop__Fv` - and separately, `setToLoggedIn`/`2`,
+`forceFriendCode`, `forceConnection`, `netThreadTaskOverride`/`2` (6 hooks
+total) all land inside one single unnamed 0x500-byte function
+(`fn_8014B364`) at ascending offsets matching their plausible semantic
+order (connection -> friend code -> logged-in -> thread override). Both
+are strong structural confirmations that these hook families are
+coherently patching one real function at multiple relevant points, not
+scattered/misplaced addresses.
+
+Also double-checked `ReplaceTrainingRoomText`/`ReplaceTrainingRoomText2` -
+these looked unusual at first (both registered `syInlineHook`, rather than
+the usual naked+`sySimpleHook`/plain+`syInlineHook` alternating pair seen
+everywhere else), but both are genuinely plain functions with no manual
+resume, so both correctly use the auto-returning hook type - not a bug,
+just a case where two independent injection points in a small function
+both happen to want the same hook type.
+
+Tried the same technique on the naked functions' *embedded jump targets*
+(e.g. `BBisCompleteMeleeSettingAllMember`'s hardcoded resume address
+`0x809644D0`) but these all landed in the `0x8096xxxx`-`0x809Fxxxx` range,
+well outside the static DOL's address space that `symbols.txt`/`RSBE01.lst`
+actually cover - almost certainly because these are `*Rel`-hooked
+functions whose resume targets point into the dynamically-loaded
+`SORA_MELEE.rel` module's own runtime code, which isn't in either symbol
+database (those only cover the main executable). No way to verify these
+further without a REL-specific symbol map I don't have access to - noting
+the limitation rather than guessing.
+
+No new bugs from this pass; strong additional confidence that hook target
+addresses are pointing at the intended real functions across the board.
+
 ## 2026-08-01 session (continued): real, build-verified, pushed fix on brawlback-asm itself - `EXIPacket::CreateAndSend` missing NULL check
 
 While re-verifying EXI packet framing (`exi_packet.cpp`) after the
