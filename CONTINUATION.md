@@ -14,6 +14,46 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-08-01 session (continued): a second, broader instance of the same race - `remotePlayerFrameData` read from the CPU thread with zero locking, every frame
+
+Immediately after the `async_queue` fix, checked whether the same pattern
+existed anywhere else - and it did, on state that's touched far more
+often. `remotePadQueueMutex` (`EXIBrawlback.cpp`) already existed and was
+correctly held on the *write* side: `ProcessIndividualRemoteFrameData`
+(pushing/trimming `remotePlayerFrameData[playerIdx]`), called from
+`ProcessRemoteFrameData` on the **netplay thread**, locks it. But grepping
+every `remotePlayerFrameData[` access found it read with **zero locking**
+from four different functions - `isRollbackMode`, `getRemoteInputs`,
+`updateSync`, `GetLatestRemoteFrame` - all reachable from the **CPU/emulation
+thread** via `handleFrameDataRequest`, `handleUpdateSync`, and
+`handleLocalPadData`. Unlike the `async_queue` race (hit once per
+outgoing-send call), these reads happen multiple times per frame, every
+single frame, for every remote player - this is hotter and more central
+than the fix above.
+
+The read-side call graph nests: `getRemoteInputs` calls `isRollbackMode`;
+`updateSync` calls `shouldRollback`, which calls `GetLatestRemoteFrame`.
+A plain `std::mutex` would self-deadlock the first time one newly-locked
+function called another on the same thread. Changed
+`remotePadQueueMutex` from `std::mutex` to `std::recursive_mutex`
+(matching the pattern `Netplay.h`'s `async_send_packet_mutex` already
+used) specifically so this doesn't depend on having traced every nested
+call path with perfect precision - recursive re-entry from the same
+thread is safe regardless of exact depth.
+
+**Fix** (commit `de90a5d` on `savestates-efficiency-v2`, NOT pushed - no
+fork exists yet): added a `lock_guard<std::recursive_mutex>` at the top of
+each of the four read functions, and updated the existing write-side
+`lock_guard`'s type to match the mutex's new type.
+
+Between this and the `async_queue` fix right below, that's two confirmed,
+live, unguarded cross-thread data races closed this session - both
+involving the CPU/emulation thread and the dedicated netplay thread, both
+plausible root causes for exactly the kind of intermittent,
+hard-to-reproduce crash that's historically hardest to diagnose from bug
+reports alone. Worth checking `localPlayerFrameData`/`read_queue_mutex`
+next for the same pattern, given how systemic this turned out to be.
+
 ## 2026-08-01 session (continued): a real, unguarded data race on `async_queue` between two OS threads - likely the most consequential find this session
 
 Followed through on the "check `Netplay.h`'s `recursive_mutex`" item
