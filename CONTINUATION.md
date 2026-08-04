@@ -14,6 +14,57 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-08-01 session (continued): a real, unguarded data race on `async_queue` between two OS threads - likely the most consequential find this session
+
+Followed through on the "check `Netplay.h`'s `recursive_mutex`" item
+flagged at the end of the previous digging round. `BrawlbackNetplay` has
+one shared `std::deque<std::unique_ptr<BrawlbackNetPacket>> async_queue`
+and one `std::recursive_mutex async_send_packet_mutex` meant to guard it.
+`SendAsync` (the push side) correctly locks the mutex around
+`async_queue.push_back(...)`. `FlushAsyncQueue` (the pop side) did
+**not lock anything at all** around `async_queue.empty()` /
+`.front()` / `.pop_front()`.
+
+Traced which threads actually call each: `FlushAsyncQueue` is called
+continuously, in a tight loop, from `NetplayThreadFunc` - a dedicated
+`std::thread` (`this->netplay_thread`). `SendAsync` is reached via
+`BroadcastPlayerFrameDataWithPastFrames`, called from
+`handleSendInputs` (`EXIBrawlback.cpp`), which is called from
+`handleLocalPadData` - a `DMAWrite` handler, running on Dolphin's
+**CPU/emulation thread**, roughly once per simulated frame. (The other
+`SendAsync`-adjacent call sites - `BroadcastGameSettings` from inside
+`NetplayThreadFunc`/`ProcessNetReceive`, and `BroadcastFramedataAck` which
+calls `BroadcastPacket` directly, bypassing the queue - all happen to run
+on the netplay thread itself, so they don't add to the race; the
+CPU-thread -> netplay-thread crossing via `handleSendInputs` is the one
+that matters.)
+
+So `async_queue` was being mutated from **two real, concurrently-running
+OS threads** - pushed with a lock held, popped with none. That's a
+textbook data race on a `std::deque`'s internal structure: undefined
+behavior, not just a style issue, and one that fires on essentially every
+frame of every match (since `handleSendInputs` runs continuously and
+`FlushAsyncQueue`'s loop never sleeps). This is a very plausible root
+cause for exactly the class of symptom that's historically hardest to
+pin down from code review alone - sporadic, seemingly-random crashes
+during real netplay sessions that don't reproduce reliably, because
+they depend on the two threads' exact timing.
+
+**Fix** (commit `f83351e` on `savestates-efficiency-v2`, NOT pushed - no
+fork exists yet): locked `FlushAsyncQueue`'s queue access with the same
+`async_send_packet_mutex`, scoped tightly around just the
+move-out-then-pop (mirroring `SendAsync`'s own existing pattern), so the
+actual `BroadcastPacket`/`enet_host_broadcast` call runs without holding
+the lock - avoids adding lock-hold time around network I/O while still
+closing the race.
+
+Given how directly this maps to "the exact kind of bug that causes
+unexplained crash reports during real play," this may end up being the
+single highest-value fix from this whole session once the code actually
+gets run - can't rank it above the correctness bugs (endianness, off-by-one
+memory) with certainty since none of this is build/live-tested yet, but
+it's a strong candidate.
+
 ## 2026-08-01 session (continued): swept the launcher for the same "checks two of three platforms" pattern that caused the macOS bug - one more found, but it's unreachable
 
 After fixing `handleDolphinExitCode`'s missing `isMac` branch, grepped
