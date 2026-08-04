@@ -14,6 +14,37 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-08-01 session (continued): a second, real live bug found on `brawlback-asm` itself - build-verified, pushed - same missing-NULL-check class as `EXIPacket::CreateAndSend`
+
+After the `TimeSync` sweep (below), went back to `brawlback-asm`'s own
+source with the same "missing NULL check after a heap alloc" pattern in
+mind, since it had already produced one real fix this session
+(`EXIPacket::CreateAndSend`, commit noted earlier in this file). Checked
+`EXI_hooks.cpp` (`Brawlback-Online/source/EXI_hooks.cpp`) - and found
+the exact same bug, twice, one level further down the call stack than the
+already-fixed one:
+
+- **`writeEXI`**: `MEMAllocFromExpHeapEx(MemExpHooks::mainHeap, size, 32)`
+  used unconditionally by the very next line's `memmove`. This is a
+  *separate* allocation from the one `CreateAndSend` already null-checks -
+  `CreateAndSend` allocates its own packet buffer, then calls `writeEXI`,
+  which allocates a *second*, 32-byte-aligned copy of that same data for
+  the actual EXI DMA transfer. Fixing `CreateAndSend` alone left this one
+  exposed. Since `writeEXI` is the only function `CreateAndSend` (the sole
+  live send path, every frame) ultimately calls into, this was still live
+  on the exact same hot path the earlier fix targeted.
+- **`readEXI`**: same pattern, `alignedDestination` used unconditionally
+  by `EXIDma`/`DCFlushRange`/`memmove` below it. This drives
+  `CheckIsMatched`'s matchmaking-handshake polling loop
+  (`Rollback_Hooks.cpp`).
+
+Fixed both the same way as `CreateAndSend`: `OSReport` + early return on
+allocation failure (added `#include <OS/OSError.h>`, which the file
+didn't previously need). **Build-verified**: `python3 ./bbk.py setup &&
+make` from the repo root, exit code 0, `Brawlback-Online.rel` produced
+clean (33 pre-existing unrelated `__declspec` warnings, no new ones).
+Commit `9df6e35`, pushed to `origin/claude/brawlback-stadium-fix-y15twm`.
+
 ## 2026-08-01 session (continued): fixed FOUR more real unguarded races, all inside `TimeSync` - `ackTimersMutex` existed but didn't cover everything it needed to
 
 After clearing `numPlayers`/`localPlayerIdx` (see next entry below - written
