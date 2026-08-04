@@ -14,6 +14,29 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-08-01 session (continued): back to `brawlback-launcher` - macOS users got zero error feedback when Dolphin crashed
+
+Resumed the launcher audit after the deep `EXIBrawlback.cpp`/`TimeSync.cpp`
+dig above. `src/renderer/lib/dolphin/handleDolphinExitCode.ts` branches on
+`isWindows`/`isLinux` (destructured from `window.electron.common`) to pick
+an error message for a nonzero Dolphin exit code - each platform has a
+couple of specific known-code messages plus a generic `default:` fallback
+("Dolphin exited with error code: 0x..., please post in Discord"). There
+was no `isMac` branch at all, even though `window.electron.common` exposes
+`isMac` right alongside the other two (`main/api.ts`) - this file just
+never destructured or checked it. Result: on macOS, `err` stays `null` for
+every single nonzero exit code, Windows/Linux's own `default:` fallback
+included - a crash produces zero visible feedback for Mac users, not even
+the generic "something went wrong" toast the other two platforms get for
+completely unrecognized codes.
+
+**Fix** (commit `e8b5503` on `master`, NOT pushed - no fork exists yet):
+added an `isMac` branch using the same generic fallback message
+Windows/Linux use in their own `default:` cases - no evidence of
+Mac-specific exit codes worth individually special-casing, so this closes
+the gap without inventing codes I can't verify. `tsc --noEmit` and the
+`husky` pre-commit hooks (lint/format) both passed clean.
+
 ## 2026-08-01 session (continued): a third instance of the same root pattern - `latestConfirmedFrame` is also a single shared scalar, and it's the one that actually drives `IncrementalRB::Rollback()`'s target frame
 
 While confirming `updateSync()`'s live rollback-trigger call (see entry
