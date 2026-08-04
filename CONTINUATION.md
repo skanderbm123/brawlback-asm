@@ -14,6 +14,62 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-08-01 session (continued): a third instance of the same root pattern - `latestConfirmedFrame` is also a single shared scalar, and it's the one that actually drives `IncrementalRB::Rollback()`'s target frame
+
+While confirming `updateSync()`'s live rollback-trigger call (see entry
+right below), traced `this->latestConfirmedFrame`
+(`EXIBrawlback.h:129`) end to end. It's declared as a single `bu32`, not
+an array - and `handleUpdateSync`'s loop (`for i in 0..numPlayers { if
+(isRollbackMode(frame, i)) updateSync(frame, i); }`) calls `updateSync`
+once per *remote* player (the local player naturally never matches
+`isRollbackMode`'s check, since `remotePlayerFrameData[localPlayerIdx]`
+is never populated - that's local storage, kept in the separate
+`localPlayerFrameData` member). In 1v1 there's exactly one remote player,
+so `updateSync` runs once per call and this is a non-issue. In a 3-4
+player match, `updateSync` runs once per *each* remote player, and every
+single call reads and unconditionally overwrites the same
+`this->latestConfirmedFrame` (`= finalFrame;` on a match, `= i - 1;` on a
+mismatch - both plain assignments, never a min/max reduction across
+players). So whichever remote player's `updateSync` call happens to run
+*last* in that loop iteration silently clobbers whatever the earlier
+players' calls just determined, rather than the shared state ending up as
+a true consensus (the minimum confirmed frame across all remote players,
+the way `GetLatestRemoteFrame()` already correctly computes elsewhere in
+this same file).
+
+This is the same "single shared scalar assumed one remote peer" pattern
+as `isPredicting` (fixed earlier this session) and `lastFrameAcked`/
+`ackTimers` (documented + leak fixed earlier this session) - but it's the
+most consequential instance of the three, because
+`this->latestConfirmedFrame` is the literal second argument to
+`IncrementalRB::Rollback(locFrame, latestConfirmedFrame)` - the actual
+target frame the whole engine rolls back to. In a 3-4 player match, this
+value can reflect the wrong player's confirmation state by the time the
+engine actually rolls back, meaning `Rollback()` could be told to target
+a frame that's wrong for one or more of the players actually involved.
+
+**Not fixed this session** - same reasoning as the other two: this needs
+`latestConfirmedFrame` to become per-remote-player (like `isPredicting`
+already is, post-fix) *and* the `Rollback()` call site to reduce across
+players (taking the true minimum, mirroring `GetLatestRemoteFrame()`'s
+existing pattern) rather than using whichever player was processed last -
+a real, if bounded, redesign, not a one-line patch. Grouping all three
+findings together for whoever tackles 3-4 player support:
+
+1. `isPredicting` (fixed) - was a scalar, now `bool[MAX_NUM_PLAYERS]`.
+2. `lastFrameAcked`/`ackTimers` (leak fixed, indexing mismatch documented
+   but not redesigned) - indexed by acked-subject instead of
+   acking-sender; the leak is gone but the true per-peer ack minimum still
+   isn't computed correctly for 3-4p.
+3. `latestConfirmedFrame` (this entry, not fixed) - a scalar that needs to
+   become per-remote-player, with the `Rollback()` call site changed to
+   take a genuine minimum across players instead of "whoever went last."
+
+All three live in `CEXIBrawlback`/`TimeSync` and all three stem from the
+same underlying fact: this subsystem's state was designed assuming
+exactly one remote peer, and the loops that iterate `0..numPlayers` were
+added on top without updating the state shape underneath them to match.
+
 ## 2026-08-01 session (continued): confirmed `handleLoadSavestate`/`CEXIBrawlback::LoadState` are dead code - the real rollback trigger is `updateSync()` calling `IncrementalRB::Rollback()` directly
 
 While re-tracing `stopRollbackFrame` (used by `SaveState`'s resim-detection
