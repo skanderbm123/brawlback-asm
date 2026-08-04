@@ -14,6 +14,28 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-08-01 session (continued): finished the thread-safety sweep - `read_queue`/`localPlayerFrameData` are both already fine
+
+Checked the two remaining candidates flagged at the end of the previous
+entry. **`read_queue`/`read_queue_mutex`**: found one write site with a
+*commented-out* lock (`SendCmdToGame(EXICommand cmd)`), which looked like
+a third instance of the same bug at first - but both `SendCmdToGame`
+overloads (the plain one and a templated one declared in the header) have
+zero real call sites anywhere (the templated one isn't even *defined*,
+only declared) - fully dead code, confirmed via grep, so the missing lock
+there is moot. Every other writer (`handleFrameDataRequest`,
+`handleFrameAdvanceRequest`, `ProcessGameSettings`) and the one reader
+(`DMARead`) already correctly lock `read_queue_mutex` on both sides - this
+one was already implemented correctly, unlike the two that needed fixing.
+**`localPlayerFrameData`**: every read and write site (`storeLocalInputs`,
+`getLocalInputs`, `handleSendInputs`, all reachable only via
+`handleLocalPadData`/`handleFrameDataRequest`) runs exclusively on the
+CPU/emulation thread - never touched from `ProcessNetReceive`/
+`NetplayThreadFunc`/anything network-thread-side, since it's local input
+data, not remote. No cross-thread exposure, so no lock is needed there
+either. Both ruled out with confidence; the sweep that started with the
+`async_queue` fix below is now complete.
+
 ## 2026-08-01 session (continued): a second, broader instance of the same race - `remotePlayerFrameData` read from the CPU thread with zero locking, every frame
 
 Immediately after the `async_queue` fix, checked whether the same pattern
