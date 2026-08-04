@@ -19,7 +19,7 @@ context for prioritization, not something to file or comment on.
 Applied the same technique that found the two fixed races to
 `Matchmaking.cpp`/`.h`. `m_state` (`ProcessState`, a plain enum, not
 `std::atomic`) and several other members (`m_remoteIps`, `m_isHost`,
-`m_localPlayerIndex`, `m_playerInfo`, `m_allowedStages`) are all written
+`m_localPlayerIndex`, `m_playerInfo`, `m_allowedStages`, `m_hostPort`) are all written
 from `Matchmaking::MatchmakeThread()` and the functions it calls
 (`startMatchmaking`, `handleMatchmaking`) - a dedicated thread
 (`m_matchmakeThread`) - and later read from `connectToOpponent()`
