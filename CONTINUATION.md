@@ -14,6 +14,64 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-08-01 session (continued): checked `numPlayers`/`localPlayerIdx`/`gameSettings` for the same cross-thread pattern - genuinely safe, verified against the game-side (asm) protocol
+
+After documenting the `Matchmaking` gap, kept sweeping `EXIBrawlback.h`'s
+"Game info" member block (`isHost`, `localPlayerIdx`, `numPlayers`,
+`hasGameStarted`, `gameSettings`) for the same write-on-one-thread/
+read-on-another pattern that produced the two fixed races. At first glance
+this looked like a third instance: `ProcessGameSettings()` (called from
+`ProcessNetReceive` inside `NetplayThreadFunc`'s loop - `netplay_thread`)
+writes `localPlayerIdx`, `numPlayers`, and `gameSettings` as plain,
+unguarded members (`EXIBrawlback.cpp:760-819`). `handleFrameDataRequest`
+and `handleLocalPadData` (both DMAWrite handlers - CPU/emulation thread)
+read all three, also with no lock, at `EXIBrawlback.cpp:202,222,225` and
+`:255-275`.
+
+Traced whether there's an implicit ordering that makes this safe anyway,
+same technique as the `Matchmaking` check. Found one, and confirmed it
+holds:
+
+1. `ProcessGameSettings` writes `localPlayerIdx`/`numPlayers`/`gameSettings`
+   as plain members, **then**, later in the same function, takes
+   `read_queue_mutex` (`EXIBrawlback.cpp:833`) to push
+   `EXICommand::CMD_SETUP_PLAYERS` onto `read_queue`.
+2. The CPU thread's `DMARead` (`EXIBrawlback.cpp:1550`, called by Dolphin's
+   EXI emulation whenever the game polls the EXI channel) takes the *same*
+   `read_queue_mutex` (`:1554`) to read `read_queue` back to the game. A
+   mutex unlock/lock pair on the same mutex object is a real
+   synchronizes-with edge in the C++ memory model, so this specific
+   lock/unlock chain does make the writes from step 1 visible to the CPU
+   thread by the time step 2 completes - not an assumption, an actual
+   guarantee.
+3. Checked the game side to confirm the CPU thread's *later* code (the
+   part that would call `handleLocalPadData`/`handleFrameDataRequest`) is
+   genuinely sequenced after step 2, not just probably so. In
+   `Brawlback-Online/source/Rollback_Hooks.cpp`, `CheckIsMatched()` does a
+   blocking `EXIHooks::readEXI` in a loop and only sets `matched = true`
+   (which lets `StartMatching`'s `while (!foundMatch ...)` loop exit and
+   the game proceed into the actual match) when the byte it reads back is
+   `EXICommand::CMD_SETUP_PLAYERS`. So the game itself refuses to advance
+   into pad-data-sending code until it has completed the exact DMARead
+   that synchronizes with `ProcessGameSettings`'s writes.
+4. `handleSendInputs` (which does the bulk of the `numPlayers`/
+   `localPlayerIdx`-dependent work) has exactly two call sites, both
+   inside `handleLocalPadData` (`EXIBrawlback.cpp:230,240`) - so it
+   inherits the same guarantee, no separate check needed.
+
+**Conclusion: not a bug.** Unlike `async_queue`/`remotePlayerFrameData`
+(which had no such chain - direct, unguarded concurrent access with no
+synchronizing operation anywhere between the two threads) and unlike the
+`Matchmaking` gap (`m_matchmakeThread` never joins before
+`matchmaking_thread` reads its output, and there's no shared mutex in that
+class at all), this case has a real, verifiable happens-before path built
+entirely out of `read_queue_mutex` plus the game's own protocol gating -
+not a lucky timing coincidence. Documenting this as a checked-and-cleared
+finding rather than silently moving on, since it looked identical to the
+two real bugs at first glance and the only way to tell them apart was
+tracing the actual synchronization chain end to end, including into the
+asm/game-side source.
+
 ## 2026-08-01 session (continued): a related but lower-certainty cross-thread gap in `Matchmaking` - documented, not patched
 
 Applied the same technique that found the two fixed races to
