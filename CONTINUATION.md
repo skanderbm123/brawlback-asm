@@ -73,13 +73,31 @@ purpose at all. Confirms 3-4 player netplay needs broader connection
 -handling work than just this one function, consistent with (and now
 better explaining *why*) the project's current focus being 1v1.
 
-**Not fixed this session** - same reasoning as below: this needs the real
-per-remote-peer redesign, not a patch, and touches connection-handling
-infrastructure that doesn't fully exist yet for >1 remote peer. But the
-leak's existence in *every* match (not just 3-4p) makes this a stronger
-candidate for near-term attention than I'd characterized it below before
-finding this - worth flagging clearly rather than filing purely under
-"only matters for FFA/doubles."
+**Update: fixed the leak specifically, separately from the deeper
+redesign** (commit `4da11e2` on `savestates-efficiency-v2`, NOT pushed -
+no fork exists yet). Since `ackTimers[i]` for `i != localPlayerIdx` is
+proven (by exhaustive grep) to never be read by anything, restricting
+`TimeSyncUpdate`'s push to just that one index is strictly
+behavior-preserving - it cannot change any observable behavior, since
+nothing was ever reading what got removed. Changed `TimeSyncUpdate`'s
+signature to take `localPlayerIdx` (it previously had no way to know its
+own index at all - `TimeSync` doesn't store one), updated its one call
+site in `handleSendInputs` to pass `this->localPlayerIdx`, and gated the
+`ackTimers[i].push_back(timing)` line behind `if (i == localPlayerIdx)`.
+Left `lastFrameTimings[i]` populated for all `numPlayers` indices
+unchanged (it's a fixed-size array, not a growing container, so writing
+unused slots there is wasted work but not a leak - narrower scope for
+this specific fix, not worth touching in the same change).
+
+This fixes the confirmed memory leak in every match. It does **not** fix
+the deeper per-remote-peer indexing mismatch itself - `ProcessFrameAck`
+still can't distinguish which of several remote peers sent a given ack in
+a 3-4 player match, so `getMinAckFrame`'s over-reporting problem (detailed
+in the entry below) is unchanged. That part genuinely needs the
+per-remote-peer redesign (matching Slippi's `PlayerIdxFromPort()`-derived
+indexing) and the `ENetPeer* peer`-is-a-single-member connection-handling
+work noted above - left undone, still the right call given it needs a
+real design, not a patch.
 
 ## 2026-08-01 session (continued): found a real, structural 3-4-player-only bug in ack tracking - documented, NOT blindly fixed (needs a real redesign, not a line patch)
 
