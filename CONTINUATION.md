@@ -14,6 +14,42 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-08-01 session (continued): confirmed `handleLoadSavestate`/`CEXIBrawlback::LoadState` are dead code - the real rollback trigger is `updateSync()` calling `IncrementalRB::Rollback()` directly
+
+While re-tracing `stopRollbackFrame` (used by `SaveState`'s resim-detection
+logic) to make sure its value meant what I assumed, noticed it's written
+from two places: `updateSync()` (`this->stopRollbackFrame = locFrame;`)
+and `handleLoadSavestate` (from a DMA payload, `CMD_LOAD_SAVESTATE`).
+Grepped the ASM repo for who actually sends `CMD_LOAD_SAVESTATE` and
+found **nobody** - only `CMD_CAPTURE_SAVESTATE` is ever sent
+(`Rollback_Hooks.cpp:338`). `handleLoadSavestate` is genuinely
+unreachable, and so is its `IncrementalRB::Rollback(this->lastStatedFrame,
+stopRollbackFrame)` call inside it.
+
+The *actual* live rollback trigger is `updateSync()`'s own direct call,
+`IncrementalRB::Rollback(locFrame, latestConfirmedFrame)`
+(`EXIBrawlback.cpp:356`) - called synchronously from Dolphin's own C++ code
+the moment a predicted-vs-actual mismatch is detected, with no DMA
+round-trip to the game needed to kick it off. This resolves what briefly
+looked like a two-writers race on `stopRollbackFrame`: in practice there's
+only one live writer (`updateSync`), so `SaveState`'s resim-detection logic
+(`this->framesToAdvance > 1 && frame - 1 < this->stopRollbackFrame`) is
+checked and confirmed correct against that single source - `stopRollbackFrame`
+holds the pre-rollback "catch-up target" frame, and the condition correctly
+identifies frames captured *during* the catch-up resimulation (resim=true,
+skip eviction, matching the already-verified `OnPagesWritten` accumulation
+logic from an earlier session) versus genuinely new post-recovery frames
+(resim=false, evict normally).
+
+Also found `CEXIBrawlback::LoadState(bu32 rollbackFrame)` is declared in
+`EXIBrawlback.h` but has **no implementation anywhere** in the `.cpp` -
+and is never called either, so it never needed to link. Harmless
+vestigial declaration, consistent with this codebase's general pattern of
+leftover unused API surface (`Research_Hooks.h`, `test_hooks.h`,
+`arena_resize`, `BroadcastPlayerFrameData`, etc., all noted earlier this
+session). Not fixed - nothing to fix, just confirming reachability so
+this doesn't get mistaken for a live code path in a future audit.
+
 ## 2026-08-01 session (continued): the default allowed-stages fallback was including the WRONG Pokemon Stadium - the one with NO rollback fix
 
 While digging through `Matchmaking.cpp`'s `handleMatchmaking()` (parsing
