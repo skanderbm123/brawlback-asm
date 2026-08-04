@@ -14,6 +14,61 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-08-01 session (continued): the default allowed-stages fallback was including the WRONG Pokemon Stadium - the one with NO rollback fix
+
+While digging through `Matchmaking.cpp`'s `handleMatchmaking()` (parsing
+the matchmaking server's JSON response), found the hardcoded default
+allowed-stages list (used whenever the server doesn't send an explicit
+`stages` array - a genuine fallback path, not dead code):
+
+```cpp
+m_allowedStages.push_back(0x2E); // PS2
+```
+
+Cross-referenced every stage ID in this list against the real
+`Stages::srStageKind` enum in `lib/BrawlHeaders/Brawl/Include/gm/gm_lib.h`
+(the same curated header collection that already gave exact confirmation
+for the Stadium fix's `grTenganEvent` offsets earlier this session).
+**`0x2E` is `Stages::PokemonStadium` / `Stages::DxPStadium`** - the
+Melee-imported classic Pokemon Stadium, a "dx" retro-import stage living
+in its own separate REL module, `ST_DXPSTADIUM` (module ID 83).
+**Pokemon Stadium 2 - the actual native Brawl competitive stage, and the
+one `StageFixes.cpp`'s `FreezeStadiumTransform` hook targets via
+`ST_STADIUM` (module ID 59) - is `Stages::PokemonStadium2` / `Stages::Stadium`
+= `0x14`**, a completely different numeric ID.
+
+The comment's own intent is unambiguous ("// PS2" = Pokemon Stadium 2),
+and it's specifically, ironically, exactly the stage this whole session's
+extensively-verified Stadium transformation-freeze fix exists to make
+rollback-safe. Since `StageFixes.cpp` only hooks module 59
+(`ST_STADIUM`), not module 83 (`ST_DXPSTADIUM`), **a match that reached
+this fallback list and happened to select stage `0x2E` would hit exactly
+the terrain-transformation rollback desync the Stadium fix was built to
+prevent - just on the wrong, unfixed stage.** This would have silently
+defeated the fix's entire real-world purpose for any match landing here,
+which is a genuinely bad way to lose a fix that got this much verification
+effort - not because the fix itself was wrong (it wasn't, per the earlier
+entries), but because the stage that actually gets selected in this
+fallback path was never the one being fixed at all.
+
+**Fix** (commit `df36ff7` on `savestates-efficiency-v2`, NOT pushed - no
+fork exists yet): changed `0x2E` to `0x14`.
+
+Spot-checked the rest of the same list against the enum while in there:
+`0x1` (Battlefield) and `0x2` (FD) match their real names exactly. `0x5`
+("Metal Cavern" in the comment) is actually `Stages::MushroomyKingdom` /
+`MarioPast` in the real enum - a real, valid stage, just an odd/incorrect
+comment label (not "Metal Cavern," which isn't a real Brawl stage name at
+all) - lower confidence this is an actual wrong-*value* bug versus just a
+mislabeled comment for the intended stage, so left the value alone.
+Same for `0x1C` ("Wario land" in the comment, actually
+`Stages::WarioWare`/`Madein` in the enum - a real stage, just casually
+misnamed, no Wario Land stage exists in vanilla Brawl to confuse it with).
+Only the `0x2E`/"PS2" entry had both an unambiguous intended stage *and* a
+numeric value that resolves to a definitively different, real, unfixed
+stage - that's what made it fixable with confidence rather than just
+flaggable as a naming quirk.
+
 ## 2026-08-01 session (continued): root-caused the ack-tracking bug against real Slippi source - it's an indexing-scheme mistranslation, and it also leaks memory unboundedly even in 1v1
 
 Dug further into the ack-tracking finding just below by diffing against
