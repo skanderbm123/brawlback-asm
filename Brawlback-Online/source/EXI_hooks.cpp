@@ -1,9 +1,19 @@
 #include "EXI_hooks.h"
 #include "mem_exp_hooks.h"
+#include <OS/OSError.h>
 namespace EXIHooks {
     void writeEXI(void* data, unsigned int size, EXIChannel channel, unsigned int device, EXIFreq frequency) {
         //need to make new buffer to ensure data is aligned to cache block
         void* alignedData = MEMAllocFromExpHeapEx(MemExpHooks::mainHeap, size, 32);
+        if (!alignedData) {
+            // Every EXIPacket::CreateAndSend call (the sole live send path,
+            // every frame) ends up here - an allocation failure previously
+            // NULL-derefed on the memmove below instead of just dropping
+            // this transfer, same class of bug as CreateAndSend's own
+            // missing check.
+            OSReport("writeEXI: Failed to alloc %u bytes! Heap space available: %u\n", size, MemExpHooks::getFreeSize(MemExpHooks::mainHeap, 32));
+            return;
+        }
         memmove(alignedData, data, size);
         DCFlushRange(alignedData, size);
         setupEXIDevice(channel, device, frequency);
@@ -16,6 +26,15 @@ namespace EXIHooks {
 
     void readEXI(void* destination, unsigned int size, EXIChannel channel, unsigned int device, EXIFreq frequency) {
         void* alignedDestination = MEMAllocFromExpHeapEx(MemExpHooks::mainHeap, size, 32);
+        if (!alignedDestination) {
+            // Same missing-null-check class as writeEXI/CreateAndSend above -
+            // an allocation failure here would otherwise NULL-deref inside
+            // EXIDma/DCFlushRange below. CheckIsMatched's polling loop
+            // (which drives this every call) tolerates a dropped read fine,
+            // same as writeEXI tolerates a dropped send.
+            OSReport("readEXI: Failed to alloc %u bytes! Heap space available: %u\n", size, MemExpHooks::getFreeSize(MemExpHooks::mainHeap, 32));
+            return;
+        }
 
         setupEXIDevice(channel, device, frequency);
         EXIDma(channel, alignedDestination, size, 0, NULL);
