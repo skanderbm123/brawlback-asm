@@ -14,6 +14,60 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-08-01 session (continued): a related but lower-certainty cross-thread gap in `Matchmaking` - documented, not patched
+
+Applied the same technique that found the two fixed races to
+`Matchmaking.cpp`/`.h`. `m_state` (`ProcessState`, a plain enum, not
+`std::atomic`) and several other members (`m_remoteIps`, `m_isHost`,
+`m_localPlayerIndex`, `m_playerInfo`, `m_allowedStages`) are all written
+from `Matchmaking::MatchmakeThread()` and the functions it calls
+(`startMatchmaking`, `handleMatchmaking`) - a dedicated thread
+(`m_matchmakeThread`) - and later read from `connectToOpponent()`
+(`EXIBrawlback.cpp`), which runs on a **different** dedicated thread
+(`CEXIBrawlback::matchmaking_thread`, driven by `MatchmakingThreadFunc`'s
+own polling loop watching `GetMatchmakeState()`). Nowhere in `Matchmaking`
+is there a mutex or atomic protecting any of this.
+
+Checked whether there's an implicit happens-before relationship (e.g. a
+`.join()`) that would make this safe in practice despite no explicit
+synchronization: there isn't one. `MatchmakeThread()`'s own driving loop
+condition, `while (IsSearching())`, still returns true for
+`ProcessState::OPPONENT_CONNECTING` (it's in the `searchingStates` map),
+so after `handleMatchmaking()` sets `m_state = OPPONENT_CONNECTING` at
+its very end, `m_matchmakeThread` loops back around and keeps calling
+`handleConnecting()` - a genuine no-op (`"Don't do anything, for now it's
+being handled on a thread on EXI"`) - forever, busy-spinning, never
+joining. Meanwhile `matchmaking_thread` detects the same state change via
+its own independent poll of `GetMatchmakeState()` and calls
+`connectToOpponent()`, reading `m_remoteIps`/`m_isHost`/etc. - all written
+by the *other*, still-running thread, with no memory barrier anywhere
+establishing that those writes are visible.
+
+**This is a real gap, but genuinely lower-confidence than the two fixed
+races above** - those had concrete, well-understood corruption potential
+(mutating a `std::deque`'s internal pointers from two threads
+concurrently is textbook undefined behavior with known failure modes).
+This one is a missing-memory-ordering-guarantee issue: on common
+real-world platforms, polling a flag in a tight loop then reading
+plain-data members shortly after often works in practice due to how
+caches and the OS scheduler behave, even without the formal C++ guarantee
+- which is exactly why bugs like this are notorious for being rare,
+environment-dependent, and hard to reproduce rather than reliably
+crashing. Not something to hand-wave away, but also not something I'm
+confident enough about the practical failure rate of to prioritize over
+everything else undone.
+
+**Not fixed this session** - a proper fix means either making `m_state`
+`std::atomic<ProcessState>` plus adding real synchronization (mutex or
+atomics) around the other shared members, or restructuring so
+`connectToOpponent()` only reads matchmaking results after a genuine
+join/handoff instead of a live poll. `Matchmaking` currently has zero
+synchronization infrastructure to build on (unlike `EXIBrawlback`, which
+already had `remotePadQueueMutex` to extend) - this is new infrastructure
+to add, a design decision, not a quick patch. Documenting alongside the
+two fixed races and the still-open thread-lifecycle/ack-tracking findings
+for whoever does the next concurrency pass.
+
 ## 2026-08-01 session (continued): finished the thread-safety sweep - `read_queue`/`localPlayerFrameData` are both already fine
 
 Checked the two remaining candidates flagged at the end of the previous
