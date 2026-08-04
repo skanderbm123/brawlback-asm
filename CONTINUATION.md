@@ -14,6 +14,43 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-08-01 session (continued): swept the launcher for the same "checks two of three platforms" pattern that caused the macOS bug - one more found, but it's unreachable
+
+After fixing `handleDolphinExitCode`'s missing `isMac` branch, grepped
+every file using `isWindows`/`isLinux`/`isMac` for the same class of gap.
+Most checked out fine (`useShortcuts.ts`'s `isMac ? meta : ctrl` is a
+correct binary split, not a missing-platform bug; `instance.ts`'s
+`isMac`-gated spawn method has a real `else` covering everyone else;
+`installation.ts`'s `isLinux`-only extra cleanup step in
+`_uninstallDolphin` is correct - Windows/Mac's `userFolder` is already a
+subdirectory of `installationFolder` so the first `fs.remove` covers it,
+only Linux's `userFolder` lives in a separate `~/.config/...` path needing
+its own removal).
+
+One more spot looked like the same bug at first: `isMac ? "app" : "exe"`
+extension filters in `Settings/DolphinSettings.tsx` and
+`QuickStart/ImportDolphinSettingsStep.tsx` would wrongly filter out real
+(no-extension) Linux Dolphin binaries from the file-picker dialog if a
+Linux user ever reached them. Traced reachability for both:
+`DolphinSettings.tsx`'s copy is wrapped in `{!isLinux && (...)}` (Linux
+gets a completely different `DevGuard`-gated directory-picker flow
+instead, so this is never rendered there) - not a bug.
+`ImportDolphinSettingsStep.tsx`'s copy isn't platform-gated in its own
+code, but tracing back through `useQuickStart.ts` to see when that step
+ever shows revealed **the whole "migrate from old desktop app" feature is
+inert**: it only shows when `useDesktopApp`'s `exists` store is `true`,
+that store's initial value is hardcoded `false`
+(`useQuickStart.ts:123-124`), and grepping the entire renderer for
+`setExists(` found exactly one call - `setExists(false)` inside the step's
+own "finish migration" handler, i.e. the *only* code that ever touches
+this flag sets it to the same value it already had. Nothing anywhere ever
+sets it `true`, so `MIGRATE_DOLPHIN` can never actually be the current
+QuickStart step, and this whole component (extension bug included) is
+unreachable dead code, not a live bug. Noting the inert feature since it's
+a real (if inconsequential) gap, but not touching it - reviving it would
+need an actual old-installation detector wired up on the main-process
+side, which is a feature to build, not a bug to fix.
+
 ## 2026-08-01 session (continued): back to `brawlback-launcher` - macOS users got zero error feedback when Dolphin crashed
 
 Resumed the launcher audit after the deep `EXIBrawlback.cpp`/`TimeSync.cpp`
