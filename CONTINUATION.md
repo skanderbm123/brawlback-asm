@@ -14,6 +14,73 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-08-01 session (continued): root-caused the ack-tracking bug against real Slippi source - it's an indexing-scheme mistranslation, and it also leaks memory unboundedly even in 1v1
+
+Dug further into the ack-tracking finding just below by diffing against
+the actual, real, working source it was ported from -
+`/workspace/ishiiruka/Source/Core/Core/Slippi/SlippiNetplay.cpp` (the same
+repo already used earlier this engagement to find/confirm the `TimeSync.cpp`
+wraparound and per-match-reset bugs). This resolved the "why" completely,
+and turned up a second, more severe consequence of the same root cause.
+
+**Slippi's real design indexes ack state by *which remote peer sent this
+ack*, not by *whose framedata it concerns*.** Line 405:
+`u8 pIdx = PlayerIdxFromPort(packetPlayerPort);` - derived from the
+*sending* packet's own port/identity - then bound-checked against
+`m_remotePlayerCount` (line 406) and used to index `lastFrameAcked[pIdx]`/
+`ackTimers[pIdx]` (lines 414/417). Every distinct remote peer gets its own
+slot, `0..m_remotePlayerCount-1`, sized purely by remote-peer count with
+**no slot for yourself at all**. The push side (`TimeSyncUpdate`'s
+Slippi equivalent, line 1303) loops `for (int i = 0; i < m_remotePlayerCount;
+i++)` - matching that same remote-only indexing exactly.
+
+**Brawlback's port changed the loop bound from `m_remotePlayerCount` to
+`numPlayers`** (`TimeSync.cpp:124`, `TimeSyncUpdate`) - which silently
+changes what each index *means*: instead of "the i-th remote peer" it
+becomes "the i-th player slot including yourself." The pop side
+(`ProcessFrameAck`) never got updated to match this new scheme - it still
+only ever writes/reads a single slot, `lastFrameAcked[localPlayerIdx]` /
+`ackTimers[localPlayerIdx]`, where that index is always *your own* fixed
+subject index (since, per the broadcast-fan-out fact from the entry right
+below, every ack that reaches `TimeSync::ProcessFrameAck` is always about
+your own sent inputs). The two halves were ported with genuinely
+different, incompatible indexing schemes, and nothing enforces they agree.
+
+**Second, more severe consequence found by tracing this precisely: the
+now-permanently-mismatched loop bound leaks memory in *every* match,
+including 1v1, for the entire match's duration.** `TimeSyncUpdate` pushes
+one `FrameTiming` into `ackTimers[i]` for every `i` in `0..numPlayers-1`,
+every single call (once per `handleSendInputs`, i.e. roughly every
+simulated frame). `ProcessFrameAck` only ever pops from
+`ackTimers[this->localPlayerIdx]` - the one slot matching your own index.
+Every *other* index's deque (in 1v1: exactly one other index, the remote
+player's slot; in 3-4p: up to three) receives a new entry every frame and
+**never has anything popped from it, ever, for the rest of the match** -
+confirmed by grepping every read/pop site of `ackTimers` in the file (only
+the one `ProcessFrameAck` site, gated to `localPlayerIdx`). Over a long
+session this grows without bound - not immediately catastrophic in raw
+bytes (`FrameTiming` is a small int+int64 pair) but it's a genuine,
+confirmed, unbounded per-frame leak that exists in every single match
+Brawlback has ever run, not just a 3-4-player edge case.
+
+Also relevant context for whoever eventually fixes this: `EXIBrawlback.h`
+has a single `ENetPeer* peer` member (line 89), not an array or a
+peer-to-player-index map - so even reproducing Slippi's `pIdx =
+PlayerIdxFromPort(...)` approach isn't a drop-in fix here; the current
+connection-handling architecture doesn't yet have the infrastructure to
+distinguish multiple simultaneous remote peer connections for this
+purpose at all. Confirms 3-4 player netplay needs broader connection
+-handling work than just this one function, consistent with (and now
+better explaining *why*) the project's current focus being 1v1.
+
+**Not fixed this session** - same reasoning as below: this needs the real
+per-remote-peer redesign, not a patch, and touches connection-handling
+infrastructure that doesn't fully exist yet for >1 remote peer. But the
+leak's existence in *every* match (not just 3-4p) makes this a stronger
+candidate for near-term attention than I'd characterized it below before
+finding this - worth flagging clearly rather than filing purely under
+"only matters for FFA/doubles."
+
 ## 2026-08-01 session (continued): found a real, structural 3-4-player-only bug in ack tracking - documented, NOT blindly fixed (needs a real redesign, not a line patch)
 
 Following the `ProcessFrameAck` broadcast-fan-out finding above, dug into
