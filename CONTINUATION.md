@@ -14,6 +14,64 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-08-01 session (continued): fixed FOUR more real unguarded races, all inside `TimeSync` - `ackTimersMutex` existed but didn't cover everything it needed to
+
+After clearing `numPlayers`/`localPlayerIdx` (see next entry below - written
+first chronologically, kept below), followed the same cross-thread member
+sweep into `TimeSync.h`/`.cpp`, since its methods are called from *both*
+the CPU/emulation thread (`TimeSyncUpdate`, `startGame`,
+`shouldStallFrame`, `calcTimeOffsetUs`, `getMinAckFrame` - all reached via
+`handleLocalPadData`/`handleSendInputs`) and `netplay_thread`
+(`ReceivedRemoteFramedata`, `ProcessFrameAck`, `getIsConnectionStalled` -
+reached via `ProcessNetReceive`/`NetplayThreadFunc`'s own loop condition).
+`TimeSync` already had an `ackTimersMutex` and used it correctly for two
+functions (`TimeSyncUpdate`, `ProcessFrameAck`) - which made it easy to
+assume the class was already thread-safe. It wasn't. Found and fixed
+(commit `e5b5aa8`, local-only, no `brawlback-team-dolphin` fork exists yet
+to push to):
+
+- **`lastFrameTimings[]`**: written under the lock in `TimeSyncUpdate`
+  (CPU thread), read with **zero locking** in `ReceivedRemoteFramedata`
+  (netplay thread, `TimeSync.cpp:179` pre-fix).
+- **`frameOffsetData[]`**: written **unguarded** in both `startGame` (CPU
+  thread) and `ReceivedRemoteFramedata` (netplay thread) - a genuine
+  write/write race, not just write/read - and also read unguarded in
+  `calcTimeOffsetUs` (CPU thread, both called directly and via
+  `shouldStallFrame`). Zero locking anywhere on this member before the
+  fix, despite it directly feeding the trimmed-mean time-sync offset
+  calculation.
+- **`isConnectionStalled`** (plus `stallFrameCount`/`isSkipping`/
+  `framesToSkip`, which share its lifecycle): written unguarded in
+  `shouldStallFrame` (CPU thread), read unguarded via
+  `getIsConnectionStalled()` - which is the **loop condition** of
+  `NetplayThreadFunc`'s main net loop (netplay thread,
+  `EXIBrawlback.cpp:976`). A torn/stale read here could keep the netplay
+  thread's main loop running (or exit it) out of sync with the actual
+  stall state.
+- **`lastFrameAcked[]`**: write side was already correctly locked
+  (`ProcessFrameAck`), but `getMinAckFrame` (CPU thread, via
+  `handleSendInputs`) read it with **no lock at all** - the exact
+  "partial locking" pattern (protect the write, forget one of the reads)
+  that produced the `remotePlayerFrameData` bug earlier this session.
+
+Fix mirrors the earlier `remotePlayerFrameData` fix: converted
+`ackTimersMutex` to `std::recursive_mutex` (needed because
+`shouldStallFrame` takes the lock and then calls `calcTimeOffsetUs`,
+which also takes it, in the same call stack on the same thread) and added
+`std::lock_guard`s to every function that touches these members:
+`shouldStallFrame`, `startGame`, `ReceivedRemoteFramedata`,
+`getMinAckFrame`, `calcTimeOffsetUs`, and the previously one-line inline
+`getIsConnectionStalled()` (moved its body out of the class definition
+enough to add the lock, still inline in the header). Updated the existing
+`TimeSyncUpdate`/`ProcessFrameAck` lock_guards' template type to match.
+
+This brings the running total of *fixed* concrete cross-thread races this
+session to six (`async_queue`, `remotePlayerFrameData`, and now these
+four in `TimeSync`), on top of the two documented-but-not-patched
+architectural gaps (`Matchmaking`, and the pre-existing thread-lifecycle
+issue from an earlier session) and the one verified-safe case
+(`numPlayers`/`localPlayerIdx`, below).
+
 ## 2026-08-01 session (continued): checked `numPlayers`/`localPlayerIdx`/`gameSettings` for the same cross-thread pattern - genuinely safe, verified against the game-side (asm) protocol
 
 After documenting the `Matchmaking` gap, kept sweeping `EXIBrawlback.h`'s
