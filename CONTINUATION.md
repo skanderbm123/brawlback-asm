@@ -14,6 +14,82 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-08-01 session (continued): issue #73 (costume desync) - a much more specific root-cause hypothesis, still not fixable without the retail binary
+
+Picked #73 back up since it's the one open issue with a documented,
+concrete "check this next" pointer (see the 2026-07-29 write-up above:
+"worth checking next whether `this->gameSettings` on the host stays
+intact... and whether the ASM-side `MergeGameSettingsIntoGame`/CSP-
+rendering code's P1/P2 assumptions line up"). Did both.
+
+**Re-traced the full merge round-trip by hand** (host broadcasts raw
+settings → client's `ProcessGameSettings` merges into `[0]=host,
+[1]=client` and rebroadcasts → host's `ProcessGameSettings` receives that
+rebroadcast and copies `opponentGameSettings->playerSettings[1]` into its
+own `[1]`). Confirmed, independently re-deriving from the current code
+rather than trusting the old note, that **the `[0]`/`[1]` indexing is
+provably symmetric and correct on both ends** - this matches and
+reconfirms the 2026-07-29 revert's conclusion (`8035041`), now with the
+full trace written out. **Not the bug.** No code changed here since
+there's nothing to fix in this part.
+
+**Went further into `MergeGameSettingsIntoGame`
+(`Rollback_Hooks.cpp:123`) → `GMMelee::PopulateMatchSettings`
+(`:1372`) → `FillInMeleeObj`
+(`:45`)**, the three-step pipeline that actually writes the merged
+network settings into the game's real memory. Found the specific line
+that's the most likely actual culprit:
+
+```cpp
+g_globalMelee.m_playersInitData[0].m_colorFileNo = GMMelee::fileIndexChoices[0];
+g_globalMelee.m_playersInitData[1].m_colorFileNo = GMMelee::fileIndexChoices[1];
+```
+
+`fileIndexChoices[i]` is the raw `colorFileIndex` value read straight off
+the network payload, which itself came from `fillOutGameSettings()`
+reading `g_GameGlobal->m_selCharData->m_playersInitData[0].m_colorFileNo`
+on **each player's own local machine** - i.e. whatever THAT player's own
+CSS/costume-selection session recorded for their own pick. This gets
+transmitted as a raw integer and, per the code above, written directly
+into the OTHER slot's `m_colorFileNo` on the REMOTE machine with no
+further processing.
+
+The reason this specific field is suspicious: `RSBE01.lst` (the real
+retail symbol table) has a genuine game function,
+`getFighterColorFileNo__6muMenuFiii` (`muMenu::getFighterColorFileNo(int,
+int, int)`, address `0x800AF93C`, confirmed present in both
+`lib/BrawlHeaders/RSBE01.lst` and independently in
+`ssbb-decomp/config/RSBE01_02/symbols.txt`). **The existence of a
+dedicated lookup function for "get this fighter's color file number"
+strongly suggests `m_colorFileNo` is not a portable, globally-meaningful
+costume ID** - it's more likely an index that's only valid *in the
+context of whatever costume list that specific local menu session
+built* (plausibly affected by that machine's own unlocked-costume/save
+state, the standard mechanism Brawl uses for secret/alt costumes).
+Blindly copying the raw integer from one machine's local context into
+another machine's `m_playersInitData[1]` without ever calling
+`getFighterColorFileNo` (or whatever the real resolution step is) on the
+*receiving* machine would be exactly the kind of bug that manifests as
+"P2 loads in as the first secret costume" if the receiving machine
+resolves that same raw index against a *different* costume list (e.g. a
+shorter one, because that machine hasn't unlocked as many alts for that
+character) than the one it was generated against.
+
+**This is a genuinely more specific, actionable hypothesis than what was
+in this file before** - previously this was "needs a live two-client test
+or Ghidra-level tracing," which is still true, but now there's a single
+named function (`getFighterColorFileNo`) and a single suspect call site to
+check first, rather than an open-ended search. **Still not fixable
+without the actual retail binary**: `getFighterColorFileNo` is only 0x24
+bytes (36 bytes, ~9 PowerPC instructions) per its symbol table entry - genuinely small enough to
+hand-disassemble in minutes - but neither `ssbb-decomp` nor
+`doldecomp-brawl` has a decompiled body for it (only the symbol/address
+entry, confirmed via grep), and this environment has no RSBE01 DOL/ISO to
+disassemble those 36 bytes from directly. Whoever picks this up next with
+access to the actual game files: disassemble `0x800AF93C` first, confirm
+what it actually resolves, and that will settle whether this hypothesis
+is right or another dead end - much faster than guessing at a fix blind.
+
 ## 2026-08-01 session (continued): a second, real live bug found on `brawlback-asm` itself - build-verified, pushed - same missing-NULL-check class as `EXIPacket::CreateAndSend`
 
 After the `TimeSync` sweep (below), went back to `brawlback-asm`'s own
