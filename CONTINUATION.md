@@ -14,6 +14,32 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-08-01 session (continued): the launcher's `/replays/*` route gets the same honest-placeholder treatment - typecheck/lint verified, pushed
+
+Direct follow-on to the `BrawlbackPane` fix above, same principle applied
+to the launcher side. An earlier session (2026-07-29, see "the flagged
+`ProcessGameSettings` lead" section further down) had already found and
+deliberately left alone a much bigger version of this pattern: the live
+`/replays/*` route renders a two-line stub (`function Replay() { return
+<h3>Replay</h3>; }`), while a **fully-built**, real `ReplayBrowserPage`
+(`containers/ReplayBrowser/`) sits unreachable behind dead routing
+(`views/MainView.tsx`, never imported anywhere). That session correctly
+declined to reconnect it - `FAQ.md` confirms Brawlback hasn't defined a
+replay file format yet, so wiring in the real browser now would look
+finished but silently fail to find or parse anything, which is worse than
+an honest stub. It explicitly left open a smaller, safe follow-up: "`Replay`'s
+stub should just get a better 'coming soon' message in the meantime."
+
+Did exactly that (commit `952716e`, pushed). Replaced the bare `<h3>Replay</h3>`
+with a centered MUI `Typography` message ("Replays are coming soon" +
+explanatory text matching `FAQ.md`'s own "still in the works" language),
+using the same `Box`/`Typography` pattern already used elsewhere in the
+app (e.g. `pages/home/HomePage.tsx`). Deliberately did **not** touch the
+bigger `MainView`/`ReplayBrowserPage` reconnection question - that's still
+correctly gated on the replay-format decision, which needs the user, not
+a guess. `npx tsc --noEmit` and `yarn lint` both clean (0 errors, only
+pre-existing warnings in unrelated files), husky pre-commit hook passed.
+
 ## 2026-08-01 session (continued): fixed the misleading "Delay Frames" spinbox and "Replay Settings" group in `BrawlbackPane` - a real, actionable UX fix
 
 The 2026-07-29 audit of `DolphinQt/Settings/BrawlbackPane.cpp` (see below)
