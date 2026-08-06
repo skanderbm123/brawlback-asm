@@ -14,6 +14,85 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-08-01 session (continued): the hardcoded RNG seed (`0x496ffd00`) - looked like a forgotten debug leftover, turned out to be load-bearing rollback-determinism architecture. Documenting, NOT touching.
+
+Spotted `g_mtRandDefault.seed = 0x496ffd00; g_mtRandOther.seed = 0x496ffd00;`
+in `MergeGameSettingsIntoGame` with the comment `// hardcoded for testing
+(arbitrary number)`, and initially read this as a classic forgotten-debug-value
+bug: the real, network-negotiated `settings.randomSeed`/`opponentGameSettings->randomSeed`
+gets computed and merged correctly (traced this - host's own locally-generated
+seed ends up identical on both host and client after the merge, exactly as
+rollback determinism requires), then immediately gets thrown away and
+overwritten with the same hardcoded literal on both sides anyway. First
+impression: this silently defeats any actual per-match randomness (every
+match ever played would use bit-identical starting RNG state) - a real,
+user-visible "why do items always spawn the same way" bug, seemingly safe
+to fix by just using `settings.randomSeed` instead of the constant.
+
+**Kept digging before touching anything, and the picture changed
+completely.** The same exact hardcoded assignment appears **four** times,
+not one:
+- `Match::EnterSceneMelee()` (match/scene start)
+- `Match::setRandSeed()` - hooked directly onto the game's own native
+  RNG-seeding function (`api->syInlineHook(0x8003fac4,
+  Match::setRandSeed)`), i.e. this *replaces* Brawl's own seed-the-RNG call
+- `FrameLogic::beginFrame()` - hooked at `0x80147394`, and per its own
+  comment is **"the start of all our logic for each frame"** - this one
+  fires on literally every single frame of every match, resetting the seed
+  right back to the same constant each time, with a telling comment: `//
+  reset flag to be used later, just resimulated/stalled/skipped/whatever,
+  reset to normal, lol`
+- `MergeGameSettingsIntoGame` (the one that started this)
+
+That `beginFrame` comment is the tell: this isn't leftover debug code, it's
+almost certainly a deliberate (if blunt) fix for **RNG determinism under
+rollback resimulation**. Rollback replays the same frame's logic multiple
+times (once "for real," then again on every resimulation after a
+misprediction) - if the RNG's internal Mersenne Twister state were allowed
+to just advance normally call-by-call, a resimulated pass of frame N would
+draw *different* random values than the original pass did (different
+position in the RNG stream, since intervening frames' `rand()` calls
+already consumed state before the resim started from `EvictSavestate`'s
+"before" snapshot). Pinning the seed back to a known value at the start of
+*every* frame - real pass or resim pass alike - means whatever RNG-driven
+logic runs during frame N always starts from the same state, so a
+resimulation of frame N reliably reproduces the same "random" outcome the
+original pass got. That's exactly the kind of problem rollback netcode has
+to solve for anything using RNG (Slippi has equivalent handling for
+Melee's RNG for the same reason), so this reads like a real, working
+(if crude) solution someone built and then just mislabeled with a
+"hardcoded for testing" comment that undersells what it's actually doing.
+
+**Why I didn't touch this**: swapping the hardcoded literal for
+`settings.randomSeed` (or something derived from it) to restore
+per-*match* variety while keeping the per-*frame* reset would plausibly
+still work - different matches would get different (but still
+internally-fixed-per-frame) RNG sequences, and the resimulation-determinism
+property wouldn't obviously be affected, since it's the "same value every
+frame" property doing that work, not the specific value chosen. But I
+don't have anywhere near enough certainty about *how many times* and
+*from which call sites* `rand()` actually gets called within a single
+frame in Brawl's own compiled code (I have no decompiled/disassembled
+access to confirm this, same blocker as #73), so I can't rule out that
+some other part of the RNG-consumption pattern silently depends on the
+specific value `0x496ffd00` landing on convenient outputs, or that some
+call site expects the seed to *not* reset mid-frame in a way I'm not
+seeing from this file alone. Changing the literal on four call sites in
+core, every-frame-executed netcode logic on a guess, with zero way to test
+a live match in this environment, is exactly the kind of change this
+session has consistently declined to make blind (same reasoning as the
+thread-lifecycle bug, the ack-tracking redesign, and the `Matchmaking`
+sync gap - real, but needs either live testing or someone who actually
+understands Brawl's RNG call graph, not a guess).
+
+**What IS worth recording as a legitimate lead, not a fix**: if
+Brawlback's real per-match randomness (item spawns etc.) currently feels
+suspiciously repetitive/identical across different online matches, *this*
+is very likely why, and the fix shape is probably "keep every-frame reset,
+change what it resets to" rather than "remove the reset entirely" - useful
+context for whoever has the actual game and can test it. Not fixed this
+session.
+
 ## 2026-08-01 session (continued): the launcher's `/replays/*` route gets the same honest-placeholder treatment - typecheck/lint verified, pushed
 
 Direct follow-on to the `BrawlbackPane` fix above, same principle applied
