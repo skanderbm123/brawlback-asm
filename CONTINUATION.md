@@ -14,6 +14,41 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-08-01 session (continued): fixed the misleading "Delay Frames" spinbox and "Replay Settings" group in `BrawlbackPane` - a real, actionable UX fix
+
+The 2026-07-29 audit of `DolphinQt/Settings/BrawlbackPane.cpp` (see below)
+found that "Delay Frames" and the whole "Replay Settings" group
+(checkbox + folder picker) were fully wired to `SConfig` fields
+(`m_delayFrames`, `m_brawlbackSaveReplays`, `m_brawlbackReplayDir`) that
+have **zero other references anywhere in `Core/`** - moving them silently
+does nothing. That was left as documented-not-fixed at the time because
+making them *actually work* is real, risky protocol/feature work (either
+a new EXI message to communicate a runtime delay value to the ASM side,
+which also needs both peers to agree on the same value since it's
+determinism-critical, or defining Brawlback's still-nonexistent replay
+file format).
+
+There's a much smaller, safe fix that doesn't require any of that: **stop
+the UI from lying.** A user moving the "Delay Frames" spinbox has every
+reason to believe they've changed their actual input delay - they
+haven't, and nothing in the UI told them so. Disabled both groups
+(`setEnabled(false)`) and added an explanatory tooltip on each control,
+rather than removing them outright (keeps the layout/scaffolding intact
+for whenever these features actually get implemented, and preserves the
+persisted `SConfig` values instead of losing them). Commit `0fbe617` in
+`/workspace/brawlback-team-dolphin` (local only, no fork exists yet to
+push to).
+
+**Not build-verified** - this repo needs a Qt/CMake toolchain this
+environment doesn't have, same limitation as every other Dolphin-fork
+change this session. The change itself is minimal-risk: four
+`setEnabled`/`setToolTip` calls on `QWidget` pointers already used
+throughout `CreateWidgets()`, following the exact same
+`QLabel`/`QSpinBox`/`QCheckBox`/`QLineEdit`/`QPushButton` API surface the
+file already calls elsewhere (e.g. `ConnectWidgets()`'s existing
+`setVisible` calls) - no new includes, no changed signatures, nothing
+that touches netcode logic.
+
 ## 2026-08-01 session (continued): issue #73 (costume desync) - a much more specific root-cause hypothesis, still not fixable without the retail binary
 
 Picked #73 back up since it's the one open issue with a documented,
