@@ -14,6 +14,74 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-08-01 session (continued): ran a `code-review` pass on the session's own diffs - caught a real gap it found, refuted one of its findings against prior empirical evidence, and left two more documented not fixed
+
+Used the newly-available `code-review` skill (`--level high`) against
+`brawlback-team-dolphin`'s recent commits as a self-check, then verified
+every finding by hand rather than trusting it blind - exactly the standard
+this file has held every other finding to.
+
+1. **Real, confirmed, fixed**: `handleLocalPadData`'s `GAME_START_FRAME`
+   branch was still pushing into `remotePlayerFrameData[playerIdx]`
+   unguarded - a genuine gap in the `remotePlayerFrameData` locking fix
+   from earlier this session. Every other read/write site got the lock
+   (`ProcessRemoteFrameData`, `isRollbackMode`, `getRemoteInputs`,
+   `updateSync`, `GetLatestRemoteFrame`); this one match-start
+   initialization push was missed. Fixed (commit `b6be0cc`): wrapped just
+   the `remotePlayerFrameData` push in `std::lock_guard<std::recursive_mutex>
+   lock(remotePadQueueMutex);` (left the sibling `localPlayerFrameData`
+   push outside the lock, since that queue is confirmed CPU-thread-only
+   and doesn't need it).
+
+2. **False positive, refuted by prior work already in this file**: the
+   review flagged `incremental_rb.cpp`'s `RollbackSavestate` else-branch
+   (`size = it->upper() - it->lower() - 1; if (!contains(*it, it->upper()))
+   size--;`) as having "the exact same erroneous check" the if-branch's
+   decrement was removed for. This looked plausible by analogy but is
+   **wrong** - the 2026-08-01 "confirmed off-by-one" entry earlier in this
+   file already empirically tested exactly this else-branch case with
+   standalone boost::icl programs against the real vendored headers
+   (`icl_test4.cpp`, scenario 4's second fragment) and confirmed its
+   decrement produces the byte-exact correct answer. The review reasoned
+   from the if-branch's comment by analogy without re-deriving the
+   else-branch's own bound semantics, which are NOT symmetric (the
+   else-branch has an independent `-1` baseline the if-branch doesn't,
+   because its lower bound is clipped and the if-branch's isn't) - exactly
+   the trap that led to writing the standalone test programs in the first
+   place instead of reasoning abstractly. Not touched, and this file's
+   original conclusion stands, now re-confirmed against a second, independent
+   pass.
+
+3. **Real but lower-priority, not fixed**: `updateSync` holds
+   `remotePadQueueMutex` across its entire body, including the
+   `IncrementalRB::Rollback()` call - which does the actual multi-page
+   savestate-restore memcpy work and touches a completely separate global
+   (`IncrementalRB::savestateInfo`) that has nothing to do with
+   `remotePlayerFrameData`. The lock could be scoped to just the reads at
+   the top of the function (`GetLatestRemoteFrame`/`shouldRollback`/the
+   `findInPlayerFrameDataQueue` loop) and released before `Rollback()`
+   runs, letting the netplay thread's `ProcessRemoteFrameData` proceed
+   instead of blocking on an unrelated memcpy during exactly the moment
+   (an active rollback) when incoming remote input is most time-sensitive.
+   This is a contention/latency concern, not a correctness bug - the
+   current code is safe, just more serialized than it needs to be.
+   Restructuring `updateSync` (the function that decides *when and how
+   much* to roll back) carries real risk of an editing mistake in the
+   single most safety-critical function in this file, for a benefit I
+   can't measure without live testing. Left as a documented optimization
+   lead rather than risking it blind.
+
+4. **Already known, not new, not touched**: the review noted
+   `BrawlbackUtility.h`'s `isInputsEqual` and `BrawlbackUtility.cpp`'s
+   `Match::isPlayerFrameDataEqual` are duplicate implementations (the
+   code's own comment already says "this code is duplicated on the .cpp
+   make it dry"). Verified both copies do currently include the
+   LTrigger/RTrigger fields (confirmed via grep) - the earlier session's
+   LTrigger/RTrigger fix was correctly applied to both, so this isn't a
+   live bug, just a pre-flagged DRY risk for whoever adds the next field.
+   Not worth a deduplication refactor of rollback-comparison logic without
+   test capability for zero current behavioral benefit.
+
 ## 2026-08-01 session (continued): the hardcoded RNG seed (`0x496ffd00`) - looked like a forgotten debug leftover, turned out to be load-bearing rollback-determinism architecture. Documenting, NOT touching.
 
 Spotted `g_mtRandDefault.seed = 0x496ffd00; g_mtRandOther.seed = 0x496ffd00;`
