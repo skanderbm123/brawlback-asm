@@ -32,7 +32,7 @@ to fix by just using `settings.randomSeed` instead of the constant.
 **Kept digging before touching anything, and the picture changed
 completely.** The same exact hardcoded assignment appears **four** times,
 not one:
-- `Match::EnterSceneMelee()` (match/scene start)
+- `Match::StartSceneMelee()` (match/scene start)
 - `Match::setRandSeed()` - hooked directly onto the game's own native
   RNG-seeding function (`api->syInlineHook(0x8003fac4,
   Match::setRandSeed)`), i.e. this *replaces* Brawl's own seed-the-RNG call
