@@ -31,7 +31,18 @@ namespace EXIHooks {
             // an allocation failure here would otherwise NULL-deref inside
             // EXIDma/DCFlushRange below. CheckIsMatched's polling loop
             // (which drives this every call) tolerates a dropped read fine,
-            // same as writeEXI tolerates a dropped send.
+            // same as writeEXI tolerates a dropped send - but only if
+            // `destination` ends up in a defined state. Its caller there
+            // passes an *uninitialized* stack buffer and reads byte 0 as a
+            // command byte right after this call with no other success
+            // check - without this, a failed allocation would leave that
+            // read looking at stack garbage instead of the CMD_UNKNOWN (0)
+            // it should see, with a small but real chance of coincidentally
+            // matching a real command byte and acting on uninitialized
+            // memory as if it were a valid received packet. Zeroing here
+            // protects every caller uniformly rather than relying on each
+            // one to separately pre-zero its own buffer.
+            memset(destination, 0, size);
             OSReport("readEXI: Failed to alloc %u bytes! Heap space available: %u\n", size, MemExpHooks::getFreeSize(MemExpHooks::mainHeap, 32));
             return;
         }
