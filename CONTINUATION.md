@@ -14,6 +14,97 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-08-01 session (continued): a second `code-review` pass, this time on `brawlback-launcher` - four real fixes, all verified, one significantly more severe than the review's own summary suggested
+
+Ran `code-review --level high` against `brawlback-launcher`'s recent
+commits too. All four findings were worth checking by hand rather than
+trusting the summary, and all four turned out real (unlike the Dolphin
+fork pass above, which had one confirmed false positive). Fixed all four,
+typecheck (`tsc --noEmit`) and lint clean on every file, husky pre-commit
+passed, commit `5eb4592` (local only - `brawlback-launcher` fork doesn't
+exist yet, same as every other launcher commit this session).
+
+1. **`MultiPathInput.tsx`** (this session's own earlier rewrite of the
+   replay-directory dedup logic): the subdirectory/dedup checks used plain
+   substring containment (`.includes()`) on raw path strings, not a real
+   path-prefix check. `"/mnt/data/replays_old".includes("/mnt/data/replays")`
+   is `true`, so adding `/mnt/data/replays` (a sibling, not a parent) would
+   silently drop the unrelated `replays_old` entry from the saved list; the
+   same bug could also wrongly *reject* adding a legitimate sibling
+   directory. Added a small `isStrictSubdirectory(parent, child)` helper
+   that checks at a path-segment boundary (`child.startsWith(parent +
+   sep)`) instead - no Node `path` module available in this sandboxed
+   renderer, so this is hand-rolled rather than pulled from a library.
+
+2. **`installation.ts`'s `_isOutOfDate()`** (also this session's own
+   earlier fix, adding `semver.coerce()` to handle Dolphin's non-strict
+   version strings like "5.0-19870"): if `coerce()` ever fails to parse
+   either version - e.g. the installed binary's `--version` output is
+   empty or unparseable, which is exactly the situation of a
+   broken/corrupted install - it silently `return`ed `false` ("not
+   outdated"), instead of surfacing the failure the way the pre-fix
+   `semver.lt()` call used to (which threw on non-strict-semver input and
+   let `validate()`'s existing try/catch fall back to a full
+   re-download). Changed the silent `return false` to a thrown `Error`,
+   confirmed `_isOutOfDate` is only ever called from inside that same
+   try/catch, so a corrupted install now correctly self-heals via
+   re-download instead of getting permanently stuck reporting "up to
+   date".
+
+3. **`windows.ts`'s wrapper-folder flatten** - the most severe of the
+   four, and worse than the review's own one-line summary suggested (the
+   review even hallucinated the wrong line number, which is exactly why
+   every finding here got checked against the real file instead of taken
+   on faith). The flatten step checked "does `destinationFolder` contain
+   exactly one entry" *after* extracting, to detect the release zip's
+   wrapper folder (`LylatDolphin-Windows/Dolphin.exe` etc.). That check
+   only works for a *fresh* install, where `destinationFolder` starts
+   empty. On a normal **update** (the actual auto-update path,
+   `validate()` → `downloadAndInstall()` with `cleanInstall` left
+   `undefined`/falsy - confirmed by reading `_installDolphin`, which only
+   calls `_uninstallDolphin()` when `cleanInstall` is explicitly `true`),
+   `destinationFolder` already contains the *previous* install's
+   already-flattened files. Extracting the new zip on top adds the
+   wrapper folder as an *additional* entry, so the post-extraction
+   directory has more than one entry, the `=== 1` check is false, and
+   flattening is silently skipped - the newly-downloaded version sits
+   unused inside the wrapper folder while the stale old `Dolphin.exe` at
+   the top level is what `findDolphinExecutable()` still finds.
+   `onComplete()` fires as if the update succeeded. **This means Windows
+   auto-updates likely never actually took effect past the very first
+   install** - every subsequent "update" would download and extract a new
+   version and then silently discard it. Fixed by identifying the wrapper
+   folder from the zip's own entry list (`zip.getEntries()`, taking the
+   first path segment of any nested entry) *before* extracting, so it
+   doesn't depend on `destinationFolder`'s pre-existing contents at all;
+   also added `{ overwrite: true }` to the subsequent `fs.move` calls,
+   since flattening now correctly runs on updates too, where the
+   destination files already exist and need to be overwritten rather than
+   erroring.
+4. **`macos.ts`'s nested-archive detection** - picked the first
+   directory entry that wasn't literally `"Dolphin.app"` and handed it
+   straight to `AdmZip`, with no defense against a stray `__MACOSX`
+   metadata folder or dotfile (`.DS_Store` etc.) - both common byproducts
+   of zips built with macOS tooling - being picked instead of the real
+   nested archive if `fs.readdir`'s (unordered-by-spec) listing happened
+   to surface the junk entry first. Unlike the Windows case, macOS's
+   `alreadyInstalled` backup-and-move logic already guarantees
+   `destinationFolder` is empty before extraction, so this isn't the same
+   update-vs-fresh-install split - it's purely about what the *outer*
+   release zip itself might contain. Excluded `__MACOSX` and dotfiles
+   explicitly rather than switching to a strict extension allowlist,
+   since I can't independently verify the nested archive's exact naming
+   convention without downloading a real release, and the original code's
+   flexible "whatever's left over" approach is worth preserving for that
+   reason - this fix only closes the specific, well-known gotcha the
+   review raised.
+
+Also checked whether `linux.ts` has the same class of bug as the Windows
+case - it doesn't: its nested-archive detection already filters by
+extension (`.AppImage`/`.zsync`) rather than counting entries, so leftover
+files from a previous install don't confuse it the way Windows's
+count-based check did. Not touched.
+
 ## 2026-08-01 session (continued): ran a `code-review` pass on the session's own diffs - caught a real gap it found, refuted one of its findings against prior empirical evidence, and left two more documented not fixed
 
 Used the newly-available `code-review` skill (`--level high`) against
