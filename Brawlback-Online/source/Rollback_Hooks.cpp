@@ -1259,10 +1259,18 @@ namespace FrameLogic {
         // other exit path, even though r26 is never actually written to
         // in this function's body so it was already holding the right
         // value regardless.
+        // r26's save slot (8(31)) is addressed relative to *this* frame's
+        // r31 (set up as the frame pointer in the prologue) - it has to be
+        // loaded before the next instruction overwrites r31 with the
+        // caller's restored value, or it reads garbage from an address
+        // relative to the wrong frame entirely. The offset fix above
+        // (re-verified via objdump) didn't catch this - the offsets were
+        // right, but this load still ran after r31 had already been
+        // clobbered by the restore that used to sit above it.
         asm volatile(
             "lwz 0, 0x0024 (1)\n\t"
-            "lwz 31, 0x001C (1)\n\t"
             "lwz 26, 0x0008 (31)\n\t"
+            "lwz 31, 0x001C (1)\n\t"
             "addi 1, 1, 32\n\t"
             "mtlr 0\n\t"
             "lwz 3, 0x0030 (26)\n\t"
