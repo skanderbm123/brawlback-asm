@@ -14,6 +14,66 @@ direction is not, ever, regardless of what any older instruction in this file
 might imply.** The issues referenced below (Brawlback-Team's) are read-only
 context for prioritization, not something to file or comment on.
 
+## 2026-08-01 session (continued): a third `code-review` pass, this time on `brawlback-asm` itself - found and fixed a real, previously-undetected bug in the ALREADY-"fixed" stack-teardown code, plus a real follow-on gap in this session's own readEXI fix
+
+Ran `code-review --level high` against `brawlback-asm` too, closing the
+loop on all three repos. Two findings, both real, both fixed, both
+build-verified:
+
+1. **`setFrameAdvanceCounter`'s hand-written stack teardown - a second,
+   independent bug in the SAME function the 2026-07-31 "stack corruption"
+   fix (commit `484c0a0`) already touched.** That earlier fix corrected
+   the frame *offsets* (LR/r31/r26 save-slot addresses) to match the
+   function's real 32-byte prologue, verified via `llvm-objdump` on the
+   built `.elf`. What it didn't catch: the *order* of two of the restore
+   instructions was also wrong. `lwz 26, 0x0008 (31)` computes r26's
+   address relative to r31 - but the prologue's `stw 26, 8(31)` addressed
+   that same slot while r31 still held *this* function's own frame
+   pointer (set via `mr 31, 1` right after `stwu`, confirmed by
+   disassembling the actual prologue: `stw 0,4(1) / stwu 1,-32(1) /
+   stw 31,28(1) / mr 31,1 / stw 26,8(31)`). The epilogue restored r31 to
+   the *caller's* value first (`lwz 31, 0x001C(1)`), then loaded r26
+   using that already-clobbered r31 - reading garbage from an address
+   relative to the wrong frame entirely, on every single frame of every
+   active match, then feeding that garbage into r3 via `lwz 3, 0x0030
+   (26)` and using it in a `cmpwi`/`bctr` jump into retail game code.
+   Fixed by swapping the two instructions' order (load r26 while r31
+   still holds the frame pointer, restore r31 after) - a one-line
+   reorder, not an offset change. **Re-disassembled the built `.elf` to
+   confirm**, same standard as the original fix: epilogue is now `lwz
+   0,36(1) / lwz 26,8(31) / lwz 31,28(1) / addi 1,1,32 / mtlr 0 / lwz
+   3,48(26) / ...`, matching the prologue's `stw 26,8(31)` exactly.
+   Build-verified (`python3 ./bbk.py setup && make`, exit 0). This is a
+   good example of why the original fix's own "still not live-tested...
+   arguably the single highest-priority item to verify" note was right to
+   flag this function specifically - getting the offsets right wasn't
+   sufficient on its own.
+
+2. **A real follow-on gap in this session's own `readEXI` NULL-check
+   fix.** The fix (documented above) correctly stops a NULL-deref on
+   allocation failure, but its early `return` never wrote anything to
+   `destination` - and `Netplay::CheckIsMatched`'s `read_data` (the
+   buffer it passes) is an uninitialized stack array with no initializer.
+   `CheckIsMatched` reads `read_data[0]` as a command byte immediately
+   after the call with no separate success/failure check on `readEXI`
+   itself. On an allocation failure, that byte would be genuine stack
+   garbage - a small but real chance of coincidentally matching a real
+   `EXICommand` value (e.g. `CMD_SETUP_PLAYERS = 14`), which would then
+   `memmove` more uninitialized stack memory into `gameSettings` and set
+   `matched = true`, entering an online match with corrupted settings
+   instead of safely retrying the read on the next poll. Fixed by having
+   `readEXI` `memset(destination, 0, size)` before returning on failure -
+   protects all three call sites uniformly (`handleSendInputs`'s
+   `inputs`, `handleFrameAdvanceRequest`'s `framesToAdvance`, and
+   `CheckIsMatched`'s `read_data`) rather than requiring each caller to
+   separately pre-zero its own buffer, and specifically makes
+   `read_data[0]` deterministically `0`/`CMD_UNKNOWN` on failure, which
+   `CheckIsMatched`'s existing check already handles correctly. Build-
+   verified (exit 0).
+
+Both commits (`4af7ebe`, `aec83eb`) pushed to
+`origin/claude/brawlback-stadium-fix-y15twm`.
+
 ## 2026-08-01 session (continued): a second `code-review` pass, this time on `brawlback-launcher` - four real fixes, all verified, one significantly more severe than the review's own summary suggested
 
 Ran `code-review --level high` against `brawlback-launcher`'s recent
